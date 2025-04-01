@@ -1,6 +1,7 @@
 # Dynamic Mouse Joystick
 
 - For in depth setup instructions please refer to the [SETUP GUIDE](SETUP.md)
+- Check the Client side Firmware on the repo [JiggyJoystickClient](https://github.com/aqc-github/JiggyJoystickClient)
 
 # ROS2 Package
 ## Running ROS2 Publisher and Subscriber Nodes
