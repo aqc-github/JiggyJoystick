@@ -56,7 +56,7 @@ sudo apt install ros-jazzy-desktop
 And the in two different terminals run the talker and listener demo nodes:
 
 Terminal 1 ->
-```bash 
+```bash
 source /opt/ros/jazzy/setup.bash
 ros2 run demo_nodes_cpp talker
 ```
@@ -68,3 +68,60 @@ ros2 run demo_nodes_py listener
 ```
 
 In both terminals you should see a publisher and a subscriber that send and receive the information. The _talker_ runs in a cpp node and the _listener_ in a python3 node, which also helps check that both languages work and have their respective installations properly executed.
+
+## Installing Microros:
+Since part of our application will be running on the Raspberry Pi, we need to install the Micro-ROS agent to enable communication between ROS2 and the Raspberry Pi.
+
+### 5. Install Micro-ROS Agent:
+To install the Micro-ROS agent, follow these steps:
+
+0. Create the Micro-ROS workspace:
+```bash
+mkdir -p ~/microros_ws/src
+cd ~/microros_ws/src
+```
+
+1. Clone the Micro-ROS repository:
+```bash
+source /opt/ros/jazzy/setup.bash
+git clone https://github.com/micro-ROS/micro_ros_setup.git
+```
+
+2. Navigate to the cloned repository:
+```bash
+cd micro_ros_setup
+```
+
+3. Update dependencies using rosdep:
+```bash
+sudo apt update && rosdep update
+rosdep install --from-paths src --ignore-src -y
+sudo apt-get install python3-pip
+```
+
+4. Build Micro-ROS tools and source them:
+```bash
+colcon build
+source install/local_setup.bash
+```
+
+4. Install Micro-ROS Agent:
+```bash
+ros2 run micro_ros_setup create_agent_ws.sh
+```
+
+5. Build the Agent and source it:
+```bash
+ros2 run micro_ros_setup build_agent.sh
+source install/local_setup.bash
+```
+
+6. Verify the installation by _dry running_ the agent:
+```bash
+ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyACM0
+```
+
+If the installation is successful, you should see in the terminal the following message or similar:
+> [1743496716.924499] info     | TermiosAgentLinux.cpp | init                     | Serial port not found. | device: /dev/ttyACM0, error 2, waiting for connection...
+
+The message displays the status of the serial port connection, and since we have not build the device yet, it shall not work.

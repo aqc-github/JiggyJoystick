@@ -1,10 +1,12 @@
 # Dynamic Mouse Joystick
 
+- For in depth setup instructions please refer to the [SETUP GUIDE](SETUP.md)
+
 # ROS2 Package
 ## Running ROS2 Publisher and Subscriber Nodes
 
 ```bash
-source ~/[workspace_path]/install/setup.bash
+source JiggyJoystick/[workspace_path]/install/setup.bash
 ```
 
 After sourcing your package, you can run your publisher and subscriber nodes using the `ros2 run` command.
@@ -33,4 +35,16 @@ ros2 run my_pubsub_pkg subscriber
 3. You can verify available nodes in your package with:
    ```bash
    ros2 pkg executables my_pubsub_pkg
+   ```
+
+## MicroROS Agent node:
+
+1. Source the MicroROS Agent environment:
+   ```bash
+   source JiggyJoystick/[workspace_path]/install/local_setup.bash
+   ```
+
+2. Run the MicroROS Agent node:
+   ```bash
+   ros2 run micro_ros_agent micro_ros_agent serial --dev /dev/ttyUSB0
    ```

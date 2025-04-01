@@ -3,3 +3,8 @@
 /ros2_ws/install/
 /ros2_ws/log/
 /CMakeLists.txt
+
+# Ignore Micro-ROS build artifacts
+/microros_ws/build/
+/microros_ws/install/
+/microros_ws/log/
