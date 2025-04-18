@@ -1,0 +1,41 @@
+{
+    "name": "MicroROS Container",
+    "privileged": true,
+    "remoteUser": "albertoquintana",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "args": {
+            "USERNAME": "albertoquintana"
+        }
+    },
+    "workspaceFolder": "/home/albertoquintana/ws",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/home/albertoquintana/ws,type=bind",
+    "customizations": {
+        "vscode": {
+            "extensions":[
+                "ms-vscode.cpptools",
+                "ms-vscode.cpptools-themes",
+                "twxs.cmake",
+                "donjayamanne.python-extension-pack",
+                "eamodio.gitlens",
+                "ms-iot.vscode-ros"
+            ]
+        }
+    },
+    "containerEnv": {
+        "DISPLAY": ":0",
+        "ROS_AUTOMATIC_DISCOVERY_RANGE": "LOCALHOST",
+        "ROS_DOMAIN_ID": "42"
+    },
+    "runArgs": [
+        "--net=host",
+        "--pid=host",
+        "--ipc=host"
+    ],
+    "mounts": [
+        "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached",
+        "source=${localEnv:HOME}/.Xauthority,target=/home/albertoquintana/.Xauthority,type=bind,consistency=cached"
+    ],
+    "initializeCommand": "defaults write org.xquartz.X11 no_auth 1 && defaults write org.xquartz.X11 nolisten_tcp 0",
+    "postCreateCommand": "sudo rosdep update && sudo rosdep install --from-paths src --ignore-src -y && sudo chown -R $(whoami) /home/albertoquintana/ws/"
+}
