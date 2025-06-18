@@ -5,7 +5,7 @@
 ### 1. Set up the locale:
 
 ```bash
-locale  # check for UTF-8
+i # check for UTF-8
 
 sudo apt update && sudo apt install locales
 sudo locale-gen en_US en_US.UTF-8
