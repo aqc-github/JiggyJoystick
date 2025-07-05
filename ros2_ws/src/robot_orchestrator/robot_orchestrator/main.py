@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
-from rclpy.action import ActionServer, CancelResponse, GoalResponse
+from rclpy.action.server import ActionServer, CancelResponse, GoalResponse
+from rclpy.action.client import ActionClient
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray, Bool, Int32
 from ament_index_python.packages import get_package_share_directory
@@ -22,7 +23,7 @@ class ExperimentManagerNode(Node):
         self.load_config(config_file)
         self.current_assay = 0
         self.current_trial = 0
-        self.trial_action_client = self.create_client(TrialAction, 'trial_action')
+        self.trial_action_client = ActionClient(self, TrialAction, 'trial_action')
         self.load_config_service = self.create_service(LoadConfig, 'load_config', self.load_config_callback)
         self.get_logger().info('Experiment Manager Node initialized')
 
@@ -55,16 +56,24 @@ class ExperimentManagerNode(Node):
                 goal.force_field_enabled = assay['force_field']['enabled']
                 goal.force_field_matrix = assay['force_field']['matrix']
                 goal.duration = assay['trial_duration']
-                self.trial_action_client.wait_for_server()
+                
+                if not self.trial_action_client.wait_for_server(timeout_sec=5.0):
+                    self.get_logger().error('Action server /trial_action not available after waiting')
+                    self.current_trial += 1
+                    continue
+                    
                 future = self.trial_action_client.send_goal_async(goal)
                 rclpy.spin_until_future_complete(self, future)
                 if future.result() and future.result().status == GoalResponse.ACCEPT:
                     self.get_logger().info(f'Started trial {self.current_trial + 1} of assay {self.current_assay + 1}')
                     result_future = future.result().get_result_async()
                     rclpy.spin_until_future_complete(self, result_future)
-                    result = result_future.result().result
-                    status = 'completed' if result.success else 'aborted'
-                    self.get_logger().info(f'Trial {self.current_trial + 1} {status}')
+                    if result_future.result():
+                        result = result_future.result().result
+                        status = 'completed' if result.success else 'aborted'
+                        self.get_logger().info(f'Trial {self.current_trial + 1} {status}')
+                    else:
+                        self.get_logger().warn('Trial result not received')
                 else:
                     self.get_logger().warn('Trial goal rejected')
                 self.current_trial += 1
