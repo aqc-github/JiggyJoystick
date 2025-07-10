@@ -22,7 +22,8 @@ def generate_launch_description():
     control_node = Node(
         package='robot_orchestrator',
         executable='control_node',
-        output='screen'
+        output='screen',
+        # arguments=['--ros-args', '--log-level', 'DEBUG']
     )
 
     logger_node = Node(

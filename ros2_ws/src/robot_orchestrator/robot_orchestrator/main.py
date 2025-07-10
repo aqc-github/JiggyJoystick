@@ -53,12 +53,10 @@ class ExperimentManagerNode(Node):
                 goal = TrialAction.Goal()
                 goal.assay_number = self.current_assay + 1
                 goal.trial_number = self.current_trial + 1
-                goal.force_field_enabled = assay['force_field']['enabled']
-                goal.force_field_matrix = assay['force_field']['matrix']
                 goal.duration = assay['trial_duration']
                 
                 if not self.trial_action_client.wait_for_server(timeout_sec=5.0):
-                    self.get_logger().error('Action server /trial_action not available after waiting')
+                    self.get_logger().error('Action server /trial_action not available')
                     self.current_trial += 1
                     continue
                     
@@ -84,17 +82,17 @@ class ExperimentManagerNode(Node):
 class ControlNode(Node):
     def __init__(self):
         super().__init__('control_node')
-        self.l1, self.l2 = 0.5, 0.5  # Link lengths (m)
         self.trial_action_server = ActionServer(
             self, TrialAction, 'trial_action', self.execute_trial_callback,
+            goal_callback=self.goal_callback,
             cancel_callback=self.cancel_callback
         )
         self.torque_pub = self.create_publisher(Float64MultiArray, '/torque_commands', 10)
         self.assay_pub = self.create_publisher(Int32, '/assay_number', 10)
         self.trial_pub = self.create_publisher(Int32, '/trial_number', 10)
         self.trial_status_pub = self.create_publisher(Int32, '/trial_status', 10)
-        self.ff_enabled_pub = self.create_publisher(Bool, '/ff_enabled', 10)
-        self.ff_value_pub = self.create_publisher(Float64MultiArray, '/ff_value', 10)
+        self.trial_success_pub = self.create_publisher(Bool, '/trial_success', 10)
+        self.start_trial_pub = self.create_publisher(Bool, '/start_trial', 10)
         self.abort_trial_pub = self.create_publisher(Bool, '/abort_trial', 10)
         self.joint_sub = self.create_subscription(
             JointState, '/joint_states', self.joint_state_callback, 10
@@ -102,48 +100,74 @@ class ControlNode(Node):
         self.trial_status_sub = self.create_subscription(
             Int32, '/trial_status', self.trial_status_callback, 10
         )
-        self.timer = self.create_timer(0.01, self.control_loop)  # 100 Hz
+        # Handshake topics updated to match thinking trace
+        self.handshake_pub = self.create_publisher(Bool, '/ros2_handshake', 10)
+        self.handshake_sub = self.create_subscription(
+            Bool, '/microcontroller_handshake', self.handshake_callback, 10
+        )
+        self.handshake_complete = False  # Tracks handshake status
+        self.timer = self.create_timer(0.01, self.control_loop)
         self.current_goal = None
         self.trial_start_time = None
         self.trial_duration = 0.0
-        self.ff_enabled = False
-        self.ff_matrix = np.zeros((2, 2))
-        self.trial_status = 0
         self.q = None
         self.dq = None
+        self.trial_status = 0
+        self.target_pos = np.array([0.0, 0.0])
+        self.tolerance = 1.0
+        self.target_angles = np.array([0.0, 0.0])
+        self.angle_tolerance = 0.01
+        self.l1 = 30.0 / 1000  # Convert mm to m
+        self.l2 = 30.0 / 1000
+        self.base_distance = 40.0 / 1000
         self.get_logger().info('Control Node initialized')
 
     def joint_state_callback(self, msg):
-        self.q = np.array(msg.position)  # Joint angles [q1, q2]
-        self.dq = np.array(msg.velocity)  # Joint velocities [dq1, dq2]
+        self.q = np.array(msg.position)
+        self.dq = np.array(msg.velocity)
 
     def trial_status_callback(self, msg):
         self.trial_status = msg.data
 
+    def goal_callback(self, goal_request):
+        """Reject goals if handshake is not complete."""
+        if not self.handshake_complete:
+            self.get_logger().warn('Handshake not complete, rejecting goal')
+            return GoalResponse.REJECT
+        self.get_logger().info('Goal accepted')
+        return GoalResponse.ACCEPT
+
     def cancel_callback(self, goal_handle):
         self.get_logger().info('Trial cancellation requested')
         self.abort_trial_pub.publish(Bool(data=True))
+        self.trial_success_pub.publish(Bool(data=False))
         return CancelResponse.ACCEPT
+
+    def handshake_callback(self, msg):
+        """Handle handshake from microcontroller."""
+        if msg.data and not self.handshake_complete:
+            self.get_logger().info('Received handshake from microcontroller')
+            self.handshake_pub.publish(Bool(data=True))
+            self.handshake_complete = True
+            self.get_logger().info('Handshake complete, sent response')
 
     def execute_trial_callback(self, goal_handle):
         goal = goal_handle.request
         self.current_goal = goal_handle
         self.trial_start_time = self.get_clock().now()
         self.trial_duration = goal.duration
-        self.ff_enabled = goal.force_field_enabled
-        self.ff_matrix = np.array(goal.force_field_matrix).reshape(2, 2)
         self.get_logger().info(f'Executing trial {goal.trial_number} of assay {goal.assay_number}')
         self.assay_pub.publish(Int32(data=goal.assay_number))
         self.trial_pub.publish(Int32(data=goal.trial_number))
-        self.ff_enabled_pub.publish(Bool(data=self.ff_enabled))
-        self.ff_value_pub.publish(Float64MultiArray(data=goal.force_field_matrix))
         self.trial_status_pub.publish(Int32(data=1))  # Setup successful
+        self.start_trial_pub.publish(Bool(data=True))  # Start trial
 
         result = TrialAction.Result()
         while rclpy.ok() and self.current_goal == goal_handle:
             if goal_handle.is_cancel_requested:
                 self.get_logger().info('Trial canceled by client')
                 self.abort_trial_pub.publish(Bool(data=True))
+                self.trial_success_pub.publish(Bool(data=False))
                 goal_handle.canceled()
                 result.success = False
                 return result
@@ -152,55 +176,73 @@ class ControlNode(Node):
                 if self.trial_status == -1:
                     self.get_logger().info('Trial aborted due to external signal')
                     self.abort_trial_pub.publish(Bool(data=True))
-                    self.trial_status_pub.publish(Int32(data=-1))
+                    self.trial_success_pub.publish(Bool(data=False))
                     result.success = False
                 else:
-                    self.get_logger().info('Trial completed successfully')
-                    self.trial_status_pub.publish(Int32(data=2))
-                    result.success = True
-                goal_handle.succeed()
+                    current_pos = self.task_state()
+                    distance = np.linalg.norm(current_pos - self.target_pos)
+                    if self.q is not None:
+                        angle_diffs = np.abs(self.q - self.target_angles)
+                        success = bool((distance < self.tolerance) and np.all(angle_diffs < self.angle_tolerance))
+                    else:
+                        success = False
+                        angle_diffs = np.array([float('inf'), float('inf')])
+                    self.get_logger().info(f'Trial ended, distance: {distance:.4f}, angle diffs: {angle_diffs}, success: {success}')
+                    self.trial_success_pub.publish(Bool(data=success))
+                    self.trial_status_pub.publish(Int32(data=2 if success else -1))
+                    self.abort_trial_pub.publish(Bool(data=True))
+                    result.success = success
+                goal_handle.succeed() if result.success else goal_handle.abort()
                 self.current_goal = None
                 return result
             feedback = TrialAction.Feedback()
             if self.q is not None and self.dq is not None:
                 feedback.joint_positions = self.q.tolist()
                 feedback.joint_velocities = self.dq.tolist()
-                tau = self.compute_torques()
+                tau = np.zeros(2)
                 feedback.torques = tau.tolist()
                 goal_handle.publish_feedback(feedback)
             time.sleep(0.01)
         result.success = False
+        self.trial_success_pub.publish(Bool(data=False))
+        self.abort_trial_pub.publish(Bool(data=True))
         goal_handle.abort()
         return result
 
     def control_loop(self):
         if not hasattr(self, 'q') or self.current_goal is None:
+            self.torque_pub.publish(Float64MultiArray(data=[0.0, 0.0]))
             return
-        tau = self.compute_torques()
+        tau = np.zeros(2)
         self.torque_pub.publish(Float64MultiArray(data=tau.tolist()))
 
-    def compute_torques(self):
-        task_pos = self.task_state()
-        F = np.zeros(2)
-        if self.ff_enabled:
-            F = self.ff_matrix @ task_pos
-        J = self.compute_jacobian()
-        return J.T @ F
-
-    def compute_jacobian(self):
-        J = np.array([
-            [-self.l1 * np.sin(self.q[0]) - self.l2 * np.sin(self.q[0] + self.q[1]), 
-             -self.l2 * np.sin(self.q[0] + self.q[1])],
-            [self.l1 * np.cos(self.q[0]) + self.l2 * np.cos(self.q[0] + self.q[1]), 
-             self.l2 * np.cos(self.q[0] + self.q[1])]
-        ])
-        return J
-
     def task_state(self):
+        if self.q is None:
+            return np.array([0.0, 0.0])
         q1, q2 = self.q
-        x = self.l1 * np.cos(q1) + self.l2 * np.cos(q1 + q2)
-        y = self.l1 * np.sin(q1) + self.l2 * np.sin(q1 + q2)
-        return np.array([x, y])
+        P1x = self.l1 * np.cos(q1)
+        P1y = self.l1 * np.sin(q1)
+        P2x = self.base_distance + self.l1 * np.cos(q2)
+        P2y = self.l1 * np.sin(q2)
+        Vx = P2x - P1x
+        Vy = P2y - P1y
+        D = np.sqrt(Vx**2 + Vy**2)
+        if D > 2 * self.l2:
+            return np.array([0.0, 0.0])
+        midpoint_x = (P1x + P2x) / 2
+        midpoint_y = (P1y + P2y) / 2
+        Ux = Vx / D
+        Uy = Vy / D
+        U_perp_x = -Uy
+        U_perp_y = Ux
+        h = np.sqrt(self.l2**2 - (D / 2)**2)
+        intersection1_x = midpoint_x + h * U_perp_x
+        intersection1_y = midpoint_y + h * U_perp_y
+        intersection2_x = midpoint_x - h * U_perp_x
+        intersection2_y = midpoint_y - h * U_perp_y
+        if intersection1_y > intersection2_y:
+            return np.array([intersection1_x, intersection1_y])
+        return np.array([intersection2_x, intersection2_y])
 
 class LoggerNode(Node):
     def __init__(self):
@@ -214,8 +256,7 @@ class LoggerNode(Node):
         self.assay_sub = self.create_subscription(Int32, '/assay_number', self.assay_callback, 10)
         self.trial_sub = self.create_subscription(Int32, '/trial_number', self.trial_callback, 10)
         self.trial_status_sub = self.create_subscription(Int32, '/trial_status', self.trial_status_callback, 10)
-        self.ff_enabled_sub = self.create_subscription(Bool, '/ff_enabled', self.ff_enabled_callback, 10)
-        self.ff_value_sub = self.create_subscription(Float64MultiArray, '/ff_value', self.ff_value_callback, 10)
+        self.trial_success_sub = self.create_subscription(Bool, '/trial_success', self.trial_success_callback, 10)
         self.data = {}
 
     def open_csv(self, assay, trial):
@@ -225,7 +266,7 @@ class LoggerNode(Node):
         self.csv_file = open(filepath, 'w', newline='')
         self.csv_writer = csv.writer(self.csv_file)
         self.csv_writer.writerow(['timestamp', 'assay', 'trial', 'joint_positions', 'joint_velocities', 
-                                 'torques', 'ff_enabled', 'ff_value', 'trial_status'])
+                                 'torques', 'trial_status', 'trial_success'])
 
     def close_csv(self):
         if self.csv_file:
@@ -255,11 +296,9 @@ class LoggerNode(Node):
         status_map = {0: 'setup ongoing', 1: 'setup successful', -1: 'aborted', 2: 'completed'}
         self.get_logger().info(f'Trial status: {status_map.get(msg.data, "ongoing")}')
 
-    def ff_enabled_callback(self, msg):
-        self.data['ff_enabled'] = msg.data
-
-    def ff_value_callback(self, msg):
-        self.data['ff_value'] = msg.data
+    def trial_success_callback(self, msg):
+        self.data['trial_success'] = msg.data
+        self.get_logger().info(f'Trial success: {msg.data}')
 
     def log_data(self):
         if self.csv_writer:
@@ -270,9 +309,8 @@ class LoggerNode(Node):
                 self.data.get('joint_positions'),
                 self.data.get('joint_velocities'),
                 self.data.get('torques'),
-                self.data.get('ff_enabled'),
-                self.data.get('ff_value'),
-                self.data.get('trial_status')
+                self.data.get('trial_status'),
+                self.data.get('trial_success')
             ])
 
 def experiment_manager_main(args=None):
@@ -294,5 +332,4 @@ def logger_main(args=None):
     rclpy.shutdown()
 
 if __name__ == '__main__':
-    # This is not intended to be run as a script
     pass
