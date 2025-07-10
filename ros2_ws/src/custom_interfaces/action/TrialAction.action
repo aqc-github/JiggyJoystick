@@ -1,0 +1,14 @@
+# Goal
+int32 assay_number
+int32 trial_number
+bool force_field_enabled
+float64[] force_field_matrix
+float32 duration
+---
+# Result
+bool success
+---
+# Feedback
+float64[] joint_positions
+float64[] joint_velocities
+float64[] torques
