@@ -112,16 +112,43 @@ sleep 5
 
 # Check if connection is established
 echo "🔍 Checking micro-ROS connection..."
-CONNECTION_CHECK=$(TEENSY_PORT="$TEENSY_PORT" sudo -E docker exec micro-ros-agent /bin/bash -c "source /opt/ros/jazzy/setup.bash && ros2 node list 2>/dev/null | grep micro_ros_simulator || echo 'not_found'")
+CONNECTION_CHECK=$(TEENSY_PORT="$TEENSY_PORT" sudo -E docker exec micro-ros-agent /bin/bash -c "source /opt/ros/jazzy/setup.bash \u0026\u0026 ros2 node list 2\u003e/dev/null | grep micro_ros_simulator || echo 'not_found'")
 
 if [ "$CONNECTION_CHECK" != "not_found" ]; then
     echo "✅ Micro-ROS connection established successfully!"
     echo "📋 Available topics:"
-    TEENSY_PORT="$TEENSY_PORT" sudo -E docker exec micro-ros-agent /bin/bash -c "source /opt/ros/jazzy/setup.bash && ros2 topic list | grep -E '(joint_states|handshake|trial)'"
+    TEENSY_PORT="$TEENSY_PORT" sudo -E docker exec micro-ros-agent /bin/bash -c "source /opt/ros/jazzy/setup.bash \u0026\u0026 ros2 topic list | grep -E '(joint_states|handshake|trial)'"
 else
-    echo "⚠️  Micro-ROS connection not detected. You may need to:"
-    echo "   1. Manually reset the Teensy (press reset button)"
-    echo "   2. Check that the Teensy is properly connected to $TEENSY_PORT"
+    echo "⚠️  Micro-ROS connection not detected."
+    echo ""
+    echo "🔌 MANUAL CONNECTION REQUIRED:"
+    echo "   The automatic reset didn't work. Please follow these steps:"
+    echo ""
+    echo "   1. Physically disconnect the Teensy USB cable"
+    echo "   2. Wait 2 seconds"
+    echo "   3. Reconnect the Teensy USB cable"
+    echo "   4. Wait for the Teensy to boot up (LED should blink)"
+    echo ""
+    echo "   Press ENTER when you have reconnected the Teensy..."
+    read -r
+    
+    echo "⏳ Waiting for Teensy to establish connection..."
+    sleep 3
+    
+    # Check connection again
+    CONNECTION_CHECK=$(TEENSY_PORT="$TEENSY_PORT" sudo -E docker exec micro-ros-agent /bin/bash -c "source /opt/ros/jazzy/setup.bash \u0026\u0026 ros2 node list 2\u003e/dev/null | grep micro_ros_simulator || echo 'not_found'")
+    
+    if [ "$CONNECTION_CHECK" != "not_found" ]; then
+        echo "✅ Micro-ROS connection established successfully after manual reconnection!"
+        echo "📋 Available topics:"
+        TEENSY_PORT="$TEENSY_PORT" sudo -E docker exec micro-ros-agent /bin/bash -c "source /opt/ros/jazzy/setup.bash \u0026\u0026 ros2 topic list | grep -E '(joint_states|handshake|trial)'"
+    else
+        echo "❌ Connection still not established. Please check:"
+        echo "   - Teensy is properly connected to $TEENSY_PORT"
+        echo "   - Teensy has the correct micro-ROS firmware"
+        echo "   - Device permissions are correct"
+        echo "   - Try running: sudo docker logs micro-ros-agent"
+    fi
 fi
 
 echo ""

@@ -28,6 +28,7 @@ This script will:
 - Start the ROS2 workspace container
 - Reset the Teensy to establish proper communication
 - Verify that all topics are available
+- **Prompt for manual connection if automatic reset fails**
 
 ### Step 1: Prerequisites
 
@@ -357,6 +358,8 @@ ros2 service call /load_config custom_interfaces/srv/LoadConfig "{config_file_pa
 
 ## Troubleshooting
 
+### General Issues
+
 - **Package Not Found**:
   - Ensure the workspace is built and sourced.
   - Verify `package.xml` and `setup.py` are correct.
@@ -371,6 +374,50 @@ ros2 service call /load_config custom_interfaces/srv/LoadConfig "{config_file_pa
 - **Build Errors**:
   - Install missing dependencies: `rosdep install --from-paths src --ignore-src -r -y`.
   - Check logs in `~/ros2_ws/log/latest_build`.
+
+### Teensy Connection Issues
+
+**Problem**: Micro-ROS agent cannot establish connection with Teensy
+
+**Symptoms**:
+- `/micro_ros_simulator` node not visible in `ros2 node list`
+- No `/joint_states` topic data
+- Micro-ROS agent logs show "Serial port not found" or connection errors
+
+**Solution**: **Manual Teensy Connection Procedure**
+
+1. **Check Teensy Detection**:
+   ```bash
+   # Verify Teensy is detected by the system
+   lsusb | grep -i teensy
+   ls -la /dev/ttyACM*
+   ```
+
+2. **Manual Reset Process**:
+   When the startup script prompts for manual connection:
+   - **Physically disconnect** the Teensy USB cable
+   - **Wait 2-3 seconds** for the system to detect disconnection
+   - **Reconnect** the Teensy USB cable
+   - **Wait for bootup** - look for the Teensy LED to blink indicating it's ready
+   - **Press ENTER** in the terminal to continue
+
+3. **Verify Connection**:
+   ```bash
+   # Check if micro-ROS node is now visible
+   sudo docker exec jiggy-joystick-ros2 bash -c "source /opt/ros/jazzy/setup.bash && ros2 node list"
+   
+   # Check topics are available
+   sudo docker exec jiggy-joystick-ros2 bash -c "source /opt/ros/jazzy/setup.bash && ros2 topic list"
+   ```
+
+4. **If Still Not Working**:
+   - Check micro-ROS agent logs: `sudo docker logs micro-ros-agent`
+   - Verify Teensy has correct firmware loaded
+   - Check USB cable and port functionality
+   - Try a different USB port
+   - Ensure user has permission to access serial ports (dialout group)
+
+**Note**: This manual connection step is required because the automatic reset mechanism in the startup script doesn't work reliably with all Teensy configurations. The manual disconnect/reconnect ensures the Teensy firmware initializes properly and establishes the micro-ROS connection.
 
 ## Example Workflow
 
