@@ -1,0 +1,47 @@
+# Use ROS2 Jazzy as base image
+FROM ros:jazzy-ros-base
+
+# Install system dependencies
+RUN apt-get update && \
+    apt-get install -y \
+    python3-colcon-common-extensions \
+    python3-pip \
+    git \
+    python3-vcstool \
+    curl \
+    nano \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /ros2_ws
+
+# Copy the ROS2 workspace source
+COPY ros2_ws/src /ros2_ws/src
+
+# Install Python dependencies
+RUN apt-get update && \
+    apt-get install -y python3-numpy python3-yaml && \
+    rm -rf /var/lib/apt/lists/*
+
+# Initialize rosdep
+RUN rosdep init || true
+RUN rosdep update
+
+# Install dependencies and build the workspace
+RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
+    rosdep install --from-paths src --ignore-src -r -y && \
+    colcon build --symlink-install"
+
+# Create logs directory
+RUN mkdir -p /ros2_ws/logs
+
+# Set up the entrypoint
+COPY scripts/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Set environment variables
+ENV ROS_DOMAIN_ID=0
+ENV PYTHONPATH=/ros2_ws/install/lib/python3.12/site-packages:$PYTHONPATH
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash"]

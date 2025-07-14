@@ -1,13 +1,88 @@
-./gazebo/
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 
-// Ignore ROS2 build artifacts
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ROS2 build artifacts
 /ros2_ws/build/
 /ros2_ws/install/
 /ros2_ws/log/
 /ros2_ws/logs/
-/CMakeLists.txt
 
-# Ignore Micro-ROS build artifacts
+# Micro-ROS build artifacts
 /microros_ws/build/
 /microros_ws/install/
 /microros_ws/log/
+
+# Docker
+.docker/
+
+# Logs
+*.log
+/logs/*.csv
+/logs/*.log
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.cache
+
+# CMake
+CMakeLists.txt.user
+CMakeCache.txt
+CMakeFiles
+CMakeScripts
+Testing
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+
+# Build artifacts
+*.o
+*.so
+*.a
+*.dll
+*.exe
+
+# PlatformIO (for Teensy firmware)
+.pio/
+.pioenvs/
+.piolibdeps/
+.clang_complete
+.gcc-flags.json

@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  # Pre-built micro-ROS agent service
+  micro-ros-agent:
+    image: microros/micro-ros-agent:jazzy
+    container_name: micro-ros-agent
+    privileged: true
+    network_mode: host
+    volumes:
+      - /dev:/dev
+    devices:
+      - ${TEENSY_PORT:-/dev/ttyACM0}:${TEENSY_PORT:-/dev/ttyACM0}
+    restart: unless-stopped
+    command: serial --dev ${TEENSY_PORT:-/dev/ttyACM0} -b 115200 -v6
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'micro-ros-agent' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  # ROS2 workspace with control, logger, and experiment manager nodes
+  jiggy-joystick-ros2:
+    build: 
+      context: .
+      dockerfile: Dockerfile.ros2
+    container_name: jiggy-joystick-ros2
+    privileged: true
+    network_mode: host
+    volumes:
+      - ./logs:/ros2_ws/logs
+      - ./ros2_ws:/ros2_ws
+      - /dev:/dev
+    devices:
+      - ${TEENSY_PORT:-/dev/ttyACM0}:${TEENSY_PORT:-/dev/ttyACM0}
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      - ROS_DOMAIN_ID=0
+    depends_on:
+      micro-ros-agent:
+        condition: service_healthy
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    command: bash -c "source /opt/ros/jazzy/setup.bash && source /ros2_ws/install/setup.bash && sleep infinity"

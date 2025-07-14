@@ -1,15 +1,153 @@
-# Robot Orchestrator ROS 2 Package
+# JiggyJoystick: Robotic Arm Experiment Controller
 
 ## Overview
 
-The `robot_orchestrator` package is a ROS 2 package designed to manage and execute experiments for a 2-DOF (degrees of freedom) robotic arm. It orchestrates trials defined in a YAML configuration file, controls the robot by computing and publishing torque commands, and logs experiment data to CSV files for analysis. The package is built for ROS 2 Jazzy Jalisco and relies on a custom interfaces package (`custom_interfaces`) for action and service definitions.
+JiggyJoystick is a user-friendly system for running experiments on a 2-degrees-of-freedom (2-DOF) robotic arm. It simplifies robotic arm control using Docker containers and micro-ROS for communication with microcontrollers, designed to support beginners and non-experts.
 
-The system consists of three nodes:
-- **ExperimentManagerNode**: Orchestrates experiments by loading configurations and sending trial goals to the control node.
-- **ControlNode**: Executes trials by controlling the robotic arm, computing torques, and providing feedback.
-- **LoggerNode**: Logs trial data (joint states, torques, etc.) to CSV files.
+## Key Features
+- **Containerization**: Easy to set up and manage experiments using Docker
+- **Automated Control and Logging**: Control the robotic arm and log data automatically
+- **Dynamic Configuration**: Adjust experiment settings on the fly with ROS 2
+- **Micro-ROS Support**: Communicate with microcontrollers (like Teensy 4.1)
+- **CSV Data Logging**: Automatic data collection for analysis
 
-The package is launched using a single launch file, `robot_orchestrator_launch.py`, which starts all three nodes.
+## Quick Start
+
+### Simplified Docker-based Setup
+
+The system now includes a simplified Docker-based setup that handles all dependencies automatically:
+
+```bash
+# Start the entire system with automatic Teensy detection and reset
+./scripts/start_system.sh
+```
+
+This script will:
+- Automatically detect the Teensy device port
+- Start the micro-ROS agent container
+- Start the ROS2 workspace container
+- Reset the Teensy to establish proper communication
+- Verify that all topics are available
+
+### Step 1: Prerequisites
+
+1. **Install Docker**:
+   - Follow the [official Docker installation guide](https://docs.docker.com/get-docker/) for your OS
+
+2. **Add User to Groups**:
+   ```bash
+   sudo usermod -aG docker $USER
+   sudo usermod -aG dialout $USER
+   ```
+   (Log out and back in to apply changes)
+
+### Step 2: Build and Run the System
+
+1. **Build the Docker Image**:
+   ```bash
+   ./scripts/docker-helper.sh build
+   ```
+
+2. **Start the Docker Container**:
+   ```bash
+   ./scripts/docker-helper.sh start
+   ```
+
+3. **Run the System**:
+   ```bash
+   ./scripts/docker-helper.sh run-system
+   ```
+
+### Recent Improvements
+
+We've made several important improvements to the JiggyJoystick system:
+
+- **Enhanced Firmware Robustness**: Updated the Teensy firmware to handle connection failures gracefully. The firmware now includes retry logic that attempts to reconnect every 5 seconds, ensuring robust communication even if the initial connection doesn't succeed.
+
+- **Automatic Teensy Reset**: Integrated an automatic reset feature into the startup script. This triggers a hardware reset of the Teensy after the micro-ROS agent is fully initialized, resolving timing issues and ensuring the XRCE-DDS session is established correctly.
+
+- **Visibility of ROS2 Topics**: Successfully established communication between the Teensy and micro-ROS agent, allowing all expected topics to appear correctly in the ROS2 network.
+
+- **Plug-and-Play Experience**: With the automatic reset and improved connection logic, the system now offers a plug-and-play experience.
+
+### Step 3: Monitor and Control
+
+- **Open Container Shell**:
+  ```bash
+  ./scripts/docker-helper.sh shell
+  ```
+
+- **View Logs**:
+  ```bash
+  ./scripts/docker-helper.sh logs
+  ```
+
+- **Check Status**:
+  ```bash
+  ./scripts/docker-helper.sh status
+  ```
+
+## Micro-ROS Integration
+
+The JiggyJoystick system integrates with micro-ROS to communicate with the Teensy 4.1 microcontroller that controls the robotic arm. This integration provides:
+
+### Hardware Communication
+- **Teensy 4.1 Node**: `/micro_ros_simulator` publishes joint states and subscribes to control commands
+- **Automatic Port Detection**: The system automatically detects the Teensy USB port
+- **Robust Connection**: Enhanced firmware with retry logic ensures reliable communication
+
+### Available Topics
+
+Once the system is running, the following topics are available:
+
+| Topic | Type | Description |
+|-------|------|-------------|
+| `/joint_states` | `sensor_msgs/JointState` | Joint positions, velocities, and efforts |
+| `/microcontroller_handshake` | `std_msgs/Bool` | Handshake initiation from Teensy |
+| `/ros2_handshake` | `std_msgs/Bool` | Handshake response to Teensy |
+| `/start_trial` | `std_msgs/Bool` | Start trial command to Teensy |
+| `/abort_trial` | `std_msgs/Bool` | Abort trial command to Teensy |
+| `/trial_success` | `std_msgs/Bool` | Trial success notification to Teensy |
+
+### Monitoring the Connection
+
+To verify the micro-ROS connection is working:
+
+```bash
+# Check if the Teensy node is visible
+sudo docker exec -it jiggy-joystick-ros2 bash -c "source /opt/ros/jazzy/setup.bash && source /ros2_ws/install/setup.bash && ros2 node list"
+
+# Monitor joint states
+sudo docker exec -it jiggy-joystick-ros2 bash -c "source /opt/ros/jazzy/setup.bash && source /ros2_ws/install/setup.bash && ros2 topic echo /joint_states"
+
+# Check handshake messages
+sudo docker exec -it jiggy-joystick-ros2 bash -c "source /opt/ros/jazzy/setup.bash && source /ros2_ws/install/setup.bash && ros2 topic echo /microcontroller_handshake"
+```
+
+### Firmware Features
+
+The Teensy firmware includes several robust features:
+
+- **Connection Retry Logic**: Automatically retries connection every 5 seconds if initial connection fails
+- **Graceful Error Handling**: No longer gets stuck in infinite error loops
+- **Handshake Protocol**: Implements a proper handshake sequence before starting trials
+- **Trial State Management**: Manages setup, active, and completion states
+- **Force Field Control**: Applies configurable force fields during trials
+
+## Docker Helper Commands
+
+| Command | Description |
+|---------|-------------|
+| `build` | Build the Docker image |
+| `start` | Start the container |
+| `stop` | Stop the container |
+| `restart` | Restart the container |
+| `shell` | Open a shell in the container |
+| `logs` | View container logs |
+| `status` | Show container status |
+| `run-system` | Run the JiggyJoystick system |
+| `clean` | Remove container and image |
+| `help` | Show help message |
 
 ## Experiment Description
 
