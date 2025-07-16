@@ -76,5 +76,8 @@ RUN echo "source /opt/ros/jazzy/setup.bash" >> ~/.bashrc
 RUN echo "source /ros2_ws/install/setup.bash" >> ~/.bashrc
 RUN echo "if [ -f /microros_ws/install/setup.bash ]; then source /microros_ws/install/setup.bash; fi" >> ~/.bashrc
 
+# Raise the microros agent on the container to wait for the communications from the "uros client" --> Teensy thorugh Serial
+RUN echo ""
+
 # Set default command
 CMD ["bash"]

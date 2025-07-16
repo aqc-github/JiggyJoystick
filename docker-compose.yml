@@ -43,4 +43,4 @@ services:
     stdin_open: true
     tty: true
     restart: unless-stopped
-    command: bash -c "source /opt/ros/jazzy/setup.bash && source /ros2_ws/install/setup.bash && sleep infinity"
+    command: bash -c "source /opt/ros/jazzy/setup.bash && source /ros2_ws/install/setup.bash && ros2 launch robot_orchestrator robot_orchestrator_launch.py"

@@ -26,14 +26,5 @@ echo "ROS2 environment ready!"
 echo "Available ROS2 packages:"
 ros2 pkg list | grep -E "(robot_orchestrator|custom_interfaces)" || echo "No custom packages found"
 
-echo "To run the system:"
-echo "  ros2 launch robot_orchestrator robot_orchestrator_launch.py"
-echo ""
-echo "To check topics:"
-echo "  ros2 topic list"
-echo ""
-echo "To monitor joint states:"
-echo "  ros2 topic echo /joint_states"
-
 # Execute the provided command
 exec "$@"

@@ -25,68 +25,22 @@ The system now includes a simplified Docker-based setup that handles all depende
 This script will:
 - Automatically detect the Teensy device port
 - Start the micro-ROS agent container
-- Start the ROS2 workspace container
+- Start the ROS2 workspace container, which automatically launches the robot orchestrator
 - Reset the Teensy to establish proper communication
 - Verify that all topics are available
 - **Prompt for manual connection if automatic reset fails**
-
-### Step 1: Prerequisites
-
-1. **Install Docker**:
-   - Follow the [official Docker installation guide](https://docs.docker.com/get-docker/) for your OS
-
-2. **Add User to Groups**:
-   ```bash
-   sudo usermod -aG docker $USER
-   sudo usermod -aG dialout $USER
-   ```
-   (Log out and back in to apply changes)
-
-### Step 2: Build and Run the System
-
-1. **Build the Docker Image**:
-   ```bash
-   ./scripts/docker-helper.sh build
-   ```
-
-2. **Start the Docker Container**:
-   ```bash
-   ./scripts/docker-helper.sh start
-   ```
-
-3. **Run the System**:
-   ```bash
-   ./scripts/docker-helper.sh run-system
-   ```
 
 ### Recent Improvements
 
 We've made several important improvements to the JiggyJoystick system:
 
+- **Fully Automated Startup**: The entire system, including the ROS 2 agent, can now be launched with a single command (`./scripts/start_system.sh`).
 - **Enhanced Firmware Robustness**: Updated the Teensy firmware to handle connection failures gracefully. The firmware now includes retry logic that attempts to reconnect every 5 seconds, ensuring robust communication even if the initial connection doesn't succeed.
-
 - **Automatic Teensy Reset**: Integrated an automatic reset feature into the startup script. This triggers a hardware reset of the Teensy after the micro-ROS agent is fully initialized, resolving timing issues and ensuring the XRCE-DDS session is established correctly.
-
 - **Visibility of ROS2 Topics**: Successfully established communication between the Teensy and micro-ROS agent, allowing all expected topics to appear correctly in the ROS2 network.
-
 - **Plug-and-Play Experience**: With the automatic reset and improved connection logic, the system now offers a plug-and-play experience.
 
-### Step 3: Monitor and Control
 
-- **Open Container Shell**:
-  ```bash
-  ./scripts/docker-helper.sh shell
-  ```
-
-- **View Logs**:
-  ```bash
-  ./scripts/docker-helper.sh logs
-  ```
-
-- **Check Status**:
-  ```bash
-  ./scripts/docker-helper.sh status
-  ```
 
 ## Micro-ROS Integration
 
@@ -135,20 +89,7 @@ The Teensy firmware includes several robust features:
 - **Trial State Management**: Manages setup, active, and completion states
 - **Force Field Control**: Applies configurable force fields during trials
 
-## Docker Helper Commands
 
-| Command | Description |
-|---------|-------------|
-| `build` | Build the Docker image |
-| `start` | Start the container |
-| `stop` | Stop the container |
-| `restart` | Restart the container |
-| `shell` | Open a shell in the container |
-| `logs` | View container logs |
-| `status` | Show container status |
-| `run-system` | Run the JiggyJoystick system |
-| `clean` | Remove container and image |
-| `help` | Show help message |
 
 ## Experiment Description
 
@@ -205,6 +146,13 @@ The system is designed to:
 
 To deploy and run the `robot_orchestrator` package, ensure the following:
 
+- **Docker**: Installed on your system. See the [official Docker installation guide](https://docs.docker.com/get-docker/).
+- **User Groups**: Your user must be in the `docker` and `dialout` groups.
+  ```bash
+  sudo usermod -aG docker $USER
+  sudo usermod -aG dialout $USER
+  ```
+  (Log out and back in to apply changes).
 - **ROS 2 Jazzy Jalisco**: Installed on your system (e.g., Raspberry Pi with Ubuntu 24.04).
 - **Dependencies**:
   - ROS 2 packages: `rclpy`, `sensor_msgs`, `std_msgs`, `ament_python`.
@@ -292,32 +240,35 @@ ros2 topic pub /joint_states sensor_msgs/JointState "header: {frame_id: ''}, nam
 
 ## Launch Instructions
 
-To run the `robot_orchestrator` package:
-1. **Source the Workspace**:
-   ```bash
-   source ~/ros2_ws/install/setup.bash
-   ```
+To run the `robot_orchestrator` package, simply run the main startup script:
 
-2. **Launch the Package**:
-   ```bash
-   ros2 launch robot_orchestrator robot_orchestrator_launch.py
-   ```
-   This starts:
-   - `experiment_manager_node`: Loads `assays.yaml` and manages trials.
-   - `control_node`: Controls the robot and executes trials.
-   - `logger_node`: Logs data to CSV files in `~/ros2_ws/logs`.
+```bash
+./scripts/start_system.sh
+```
 
-3. **Monitor Output**:
-   - Check console output for node initialization and trial progress.
-   - Verify CSV files in `~/ros2_ws/logs` (e.g., `log_assay1_trial1_TIMESTAMP.csv`).
-   - List topics to confirm communication:
-     ```bash
-     ros2 topic list
-     ```
-     Expected topics: `/joint_states`, `/torque_commands`, `/assay_number`, `/trial_number`, `/trial_status`, `/ff_enabled`, `/ff_value`, `/abort_trial`.
+This script handles the entire startup process, including:
+- Detecting the Teensy port.
+- Launching the `micro-ros-agent` and `jiggy-joystick-ros2` Docker containers.
+- Automatically running the `robot_orchestrator_launch.py` file within the `jiggy-joystick-ros2` container.
 
-4. **Stop the Experiment**:
-   Press `Ctrl+C` to stop the nodes. The `LoggerNode` will close any open CSV files.
+### Monitoring the System
+
+Once the system is running, you can monitor it in several ways:
+
+- **View Container Logs**:
+  ```bash
+  sudo docker-compose logs -f
+  ```
+
+- **Connect to the ROS 2 Container**:
+  ```bash
+  sudo docker exec -it jiggy-joystick-ros2 bash
+  ```
+
+- **List ROS 2 Topics**:
+  ```bash
+  ros2 topic list
+  ```
 
 ## Configuration
 
@@ -421,7 +372,7 @@ ros2 service call /load_config custom_interfaces/srv/LoadConfig "{config_file_pa
 
 ## Example Workflow
 
-1. Launch the system: `ros2 launch robot_orchestrator robot_orchestrator_launch.py`.
+1. Launch the system: `./scripts/start_system.sh`.
 2. The `ExperimentManagerNode` loads `assays.yaml` (e.g., 3 assays, 2 trials each).
 3. For each trial:
    - Sends a goal to `ControlNode` (e.g., assay 1, trial 1, duration 10s, force field enabled).
@@ -436,7 +387,7 @@ ros2 service call /load_config custom_interfaces/srv/LoadConfig "{config_file_pa
 To contribute:
 1. Fork the repository or modify `~/ros2_ws/src/robot_orchestrator`.
 2. Update `main.py`, `assays.yaml`, or other files.
-3. Rebuild and test: `colcon build && ros2 launch robot_orchestrator robot_orchestrator_launch.py`.
+3. Rebuild and test: `colcon build && ./scripts/start_system.sh`.
 4. Submit changes via pull requests or update the workspace.
 
 ## License
