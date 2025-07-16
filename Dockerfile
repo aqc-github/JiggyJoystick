@@ -36,48 +36,23 @@ RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
 RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
     colcon build --symlink-install"
 
-# Set up microros workspace following original SETUP.md instructions
-WORKDIR /microros_ws
-
-# Install additional dependencies for micro-ROS
-RUN apt-get update && \
-    apt-get install -y \
-    flex \
-    bison \
-    libncurses-dev \
-    usbutils \
-    libcurl4-openssl-dev \
-    clang-tidy \
-    libasio-dev \
-    libtinyxml2-dev \
-    libssl-dev \
-    libfastcdr-dev \
-    libfastrtps-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create the Micro-ROS workspace and build the agent
-RUN /bin/bash -c "mkdir -p src && \
-    cd src && \
-    source /opt/ros/jazzy/setup.bash && \
-    git clone https://github.com/micro-ROS/micro_ros_setup.git && \
-    cd .. && \
-    rosdep update && \
-    rosdep install --from-paths src --ignore-src -r -y && \
-    colcon build --symlink-install && \
-    source install/setup.bash && \
-    ros2 run micro_ros_setup create_agent_ws.sh && \
-    ros2 run micro_ros_setup build_agent.sh"
-
 # Create logs directory
 RUN mkdir -p /ros2_ws/logs
 
 # Source ROS 2 setup
 RUN echo "source /opt/ros/jazzy/setup.bash" >> ~/.bashrc
 RUN echo "source /ros2_ws/install/setup.bash" >> ~/.bashrc
-RUN echo "if [ -f /microros_ws/install/setup.bash ]; then source /microros_ws/install/setup.bash; fi" >> ~/.bashrc
 
-# Raise the microros agent on the container to wait for the communications from the "uros client" --> Teensy thorugh Serial
-RUN echo ""
+# Go back to ROS2 workspace
+WORKDIR /ros2_ws
 
-# Set default command
+# Set up the entrypoint
+COPY scripts/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Set environment variables
+ENV ROS_DOMAIN_ID=0
+ENV PYTHONPATH=/ros2_ws/install/lib/python3.12/site-packages:$PYTHONPATH
+
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["bash"]

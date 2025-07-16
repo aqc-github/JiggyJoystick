@@ -13,9 +13,9 @@ JiggyJoystick is a user-friendly system for running experiments on a 2-degrees-o
 
 ## Quick Start
 
-### Simplified Docker-based Setup
+### Docker-First Approach
 
-The system now includes a simplified Docker-based setup that handles all dependencies automatically:
+**JiggyJoystick runs entirely in Docker containers for platform-agnostic deployment.** This ensures consistent behavior across all operating systems (Linux, macOS, Windows) and eliminates dependency management issues.
 
 ```bash
 # Start the entire system with automatic Teensy detection and reset
@@ -29,6 +29,14 @@ This script will:
 - Reset the Teensy to establish proper communication
 - Verify that all topics are available
 - **Prompt for manual connection if automatic reset fails**
+
+### Why Docker?
+
+- **Platform Independence**: Works on any system with Docker installed
+- **No Local ROS2 Installation**: All ROS2 dependencies are contained within Docker
+- **Reproducible Environment**: Consistent behavior across different machines
+- **Easy Deployment**: Single command startup with automatic dependency resolution
+- **Isolation**: No conflicts with existing software on the host system
 
 ### Recent Improvements
 
@@ -144,7 +152,9 @@ The system is designed to:
 
 ## Prerequisites
 
-To deploy and run the `robot_orchestrator` package, ensure the following:
+**JiggyJoystick runs entirely in Docker containers - no local ROS2 installation required!**
+
+### System Requirements
 
 - **Docker**: Installed on your system. See the [official Docker installation guide](https://docs.docker.com/get-docker/).
 - **User Groups**: Your user must be in the `docker` and `dialout` groups.
@@ -153,90 +163,39 @@ To deploy and run the `robot_orchestrator` package, ensure the following:
   sudo usermod -aG dialout $USER
   ```
   (Log out and back in to apply changes).
-- **ROS 2 Jazzy Jalisco**: Installed on your system (e.g., Raspberry Pi with Ubuntu 24.04).
-- **Dependencies**:
-  - ROS 2 packages: `rclpy`, `sensor_msgs`, `std_msgs`, `ament_python`.
-  - Python libraries: `numpy`, `pyyaml`.
-  - Custom ROS 2 package: `custom_interfaces` (defines `TrialAction` and `LoadConfig`).
-- **Robot Hardware**: A 2-DOF robotic arm with a ROS 2 node publishing `/joint_states` (type `sensor_msgs.msg.JointState`) and subscribing to `/torque_commands` (type `std_msgs.msg.Float64MultiArray`).
-- **Workspace**: A ROS 2 workspace containing `robot_orchestrator` and `custom_interfaces` packages.
+- **Hardware**: Teensy 4.1 microcontroller with USB connection
+- **Operating System**: Any system that supports Docker (Linux, macOS, Windows)
 
-## Installation
+### What's Included in Docker
 
-Follow these steps to set up the package on a Raspberry Pi (or similar system) running Ubuntu 24.04 with ROS 2 Jazzy Jalisco.
+The Docker containers provide everything needed:
+- **ROS 2 Jazzy Jalisco**: Complete ROS2 installation
+- **Dependencies**: All ROS 2 packages (`rclpy`, `sensor_msgs`, `std_msgs`, `ament_python`)
+- **Python Libraries**: `numpy`, `pyyaml`, and other required packages
+- **Custom Interfaces**: `custom_interfaces` package with `TrialAction` and `LoadConfig`
+- **Robot Orchestrator**: Complete `robot_orchestrator` package
+- **Micro-ROS Agent**: For communication with Teensy microcontroller
 
-### 1. Install ROS 2 Jazzy
+## Getting Started
+
+**No installation required!** Simply clone the repository and run the startup script.
+
+### 1. Clone the Repository
 ```bash
-sudo apt update && sudo apt upgrade
-sudo apt install -y curl gnupg2 lsb-release
-curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
-sudo apt update
-sudo apt install -y ros-jazzy-desktop
-source /opt/ros/jazzy/setup.bash
-echo "source /opt/ros/jazzy/setup.bash" >> ~/.bashrc
+git clone https://github.com/your-username/JiggyJoystick.git
+cd JiggyJoystick
 ```
 
-### 2. Install Build Tools and Dependencies
+### 2. Connect Your Teensy
+- Connect your Teensy 4.1 to your computer via USB
+- Ensure the Teensy has the correct firmware loaded (see firmware documentation)
+
+### 3. Start the System
 ```bash
-sudo apt install -y python3-colcon-common-extensions python3-rosdep
-sudo rosdep init
-rosdep update
-pip3 install numpy pyyaml
+./scripts/start_system.sh
 ```
 
-### 3. Set Up the ROS 2 Workspace
-Create a workspace and clone the required packages:
-```bash
-mkdir -p ~/ros2_ws/src
-cd ~/ros2_ws/src
-# Clone or copy robot_orchestrator and custom_interfaces packages
-# Example: scp -r robot_orchestrator custom_interfaces user@host:~/ros2_ws/src/
-```
-
-Ensure the workspace structure is:
-```
-~/ros2_ws/
-└── src/
-    ├── custom_interfaces/
-    │   ├── action/TrialAction.action
-    │   ├── srv/LoadConfig.srv
-    │   ├── CMakeLists.txt
-    │   └── package.xml
-    └── robot_orchestrator/
-        ├── config/assays.yaml
-        ├── launch/robot_orchestrator_launch.py
-        ├── robot_orchestrator/main.py
-        ├── package.xml
-        ├── setup.py
-        └── setup.cfg
-```
-
-### 4. Build the Workspace
-```bash
-cd ~/ros2_ws
-source /opt/ros/jazzy/setup.bash
-rosdep install --from-paths src --ignore-src -r -y
-colcon build --symlink-install
-source install/setup.bash
-echo "source ~/ros2_ws/install/setup.bash" >> ~/.bashrc
-```
-
-### 5. Set Up Logging Directory
-Create a writable directory for log files:
-```bash
-mkdir -p ~/ros2_ws/logs
-chmod 777 ~/ros2_ws/logs
-```
-
-### 6. Configure Robot Hardware
-Ensure your robotic arm’s ROS 2 driver is installed and configured to:
-- Publish `/joint_states` (type `sensor_msgs.msg.JointState`) with joint positions and velocities for two joints (`joint1`, `joint2`).
-- Subscribe to `/torque_commands` (type `std_msgs.msg.Float64MultiArray`) to apply torque commands.
-Example (for testing without hardware):
-```bash
-ros2 topic pub /joint_states sensor_msgs/JointState "header: {frame_id: ''}, name: ['joint1', 'joint2'], position: [0.0, 0.0], velocity: [0.0, 0.0], effort: [0.0, 0.0]" -r 10
-```
+That's it! The Docker containers will be built automatically and the system will start.
 
 ## Launch Instructions
 
@@ -385,10 +344,17 @@ ros2 service call /load_config custom_interfaces/srv/LoadConfig "{config_file_pa
 ## Contributing
 
 To contribute:
-1. Fork the repository or modify `~/ros2_ws/src/robot_orchestrator`.
-2. Update `main.py`, `assays.yaml`, or other files.
-3. Rebuild and test: `colcon build && ./scripts/start_system.sh`.
-4. Submit changes via pull requests or update the workspace.
+1. Fork the repository and make your changes
+2. Update source files in `ros2_ws/src/robot_orchestrator/` or `ros2_ws/src/custom_interfaces/`
+3. Test your changes: `./scripts/start_system.sh` (Docker will automatically rebuild)
+4. Submit changes via pull requests
+
+### Development Workflow
+
+- **Code changes**: Edit files in `ros2_ws/src/` - Docker will rebuild automatically
+- **Configuration changes**: Modify `ros2_ws/src/robot_orchestrator/config/assays.yaml`
+- **Testing**: Use `./scripts/start_system.sh` to test changes
+- **Debugging**: Access the container with `sudo docker exec -it jiggy-joystick-ros2 bash`
 
 ## License
 

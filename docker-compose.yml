@@ -23,13 +23,13 @@ services:
   jiggy-joystick-ros2:
     build: 
       context: .
-      dockerfile: Dockerfile.ros2
+      dockerfile: Dockerfile
     container_name: jiggy-joystick-ros2
     privileged: true
     network_mode: host
     volumes:
       - ./logs:/ros2_ws/logs
-      - ./ros2_ws:/ros2_ws
+      - ./ros2_ws/src:/ros2_ws/src
       - /dev:/dev
     devices:
       - ${TEENSY_PORT:-/dev/ttyACM0}:${TEENSY_PORT:-/dev/ttyACM0}
@@ -43,4 +43,4 @@ services:
     stdin_open: true
     tty: true
     restart: unless-stopped
-    command: bash -c "source /opt/ros/jazzy/setup.bash && source /ros2_ws/install/setup.bash && ros2 launch robot_orchestrator robot_orchestrator_launch.py"
+    command: ["/entrypoint.sh", "bash", "-c", "ros2 launch robot_orchestrator robot_orchestrator_launch.py"]

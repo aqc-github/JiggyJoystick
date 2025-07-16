@@ -287,6 +287,11 @@ class ControlNode(Node):
         self.trial_pub = self.create_publisher(Int32, '/trial_number', 10)
         self.trial_status_pub = self.create_publisher(Int32, '/trial_status', 10)
         
+        # Force field and torque publishers
+        self.torque_pub = self.create_publisher(Float64MultiArray, '/torque_commands', 10)
+        self.ff_enabled_pub = self.create_publisher(Bool, '/ff_enabled', 10)
+        self.ff_value_pub = self.create_publisher(Float64MultiArray, '/ff_value', 10)
+        
         # Subscribers
         self.joint_states_sub = self.create_subscription(
             JointState, '/joint_states', self.joint_states_callback, 10
@@ -302,11 +307,86 @@ class ControlNode(Node):
         self.current_goal = None
         self.trial_start_time = None
         
+        # Control parameters
+        self.force_field_enabled = False
+        self.force_field_matrix = np.array([[0.0, 0.0], [0.0, 0.0]])
+        
+        # Robot parameters (2-DOF arm)
+        self.l1 = 30.0 / 1000  # Link 1 length in meters
+        self.l2 = 30.0 / 1000  # Link 2 length in meters
+        self.base_distance = 40.0 / 1000  # Base separation in meters
+        
+        # Control loop timer (100 Hz)
+        self.control_timer = self.create_timer(0.01, self.control_loop)
+        
         # Timer for status updates
         self.status_timer = self.create_timer(2.0, self.print_status)
         
         self.get_logger().info('🎮 Control Node initialized')
         self.get_logger().info('Action server "/trial_action" ready')
+    
+    def forward_kinematics(self, q1, q2):
+        """Calculate forward kinematics for 2-DOF arm"""
+        # Convert to radians if needed (assuming already in radians)
+        x1 = self.l1 * np.cos(q1)
+        y1 = self.l1 * np.sin(q1)
+        
+        x2 = x1 + self.l2 * np.cos(q1 + q2)
+        y2 = y1 + self.l2 * np.sin(q1 + q2)
+        
+        return np.array([x2, y2])
+    
+    def jacobian(self, q1, q2):
+        """Calculate Jacobian matrix for 2-DOF arm"""
+        J = np.zeros((2, 2))
+        
+        # dx/dq1, dx/dq2
+        J[0, 0] = -self.l1 * np.sin(q1) - self.l2 * np.sin(q1 + q2)
+        J[0, 1] = -self.l2 * np.sin(q1 + q2)
+        
+        # dy/dq1, dy/dq2
+        J[1, 0] = self.l1 * np.cos(q1) + self.l2 * np.cos(q1 + q2)
+        J[1, 1] = self.l2 * np.cos(q1 + q2)
+        
+        return J
+    
+    def control_loop(self):
+        """Main control loop running at 100Hz"""
+        if self.q is None or self.dq is None:
+            return
+            
+        # Calculate forward kinematics
+        ee_pos = self.forward_kinematics(self.q[0], self.q[1])
+        
+        # Calculate Jacobian
+        J = self.jacobian(self.q[0], self.q[1])
+        
+        # Calculate end-effector velocity
+        ee_vel = J @ self.dq[:2]
+        
+        # Calculate force field forces
+        ff_forces = np.zeros(2)
+        if self.force_field_enabled:
+            ff_forces = self.force_field_matrix @ ee_vel
+        
+        # Convert forces to joint torques using Jacobian transpose
+        try:
+            torques = J.T @ ff_forces
+        except:
+            torques = np.zeros(2)
+        
+        # Publish torque commands
+        torque_msg = Float64MultiArray()
+        torque_msg.data = torques.tolist()
+        self.torque_pub.publish(torque_msg)
+        
+        # Update feedback with torques if we have an active trial
+        if self.current_goal and hasattr(self.current_goal, 'request'):
+            feedback = TrialAction.Feedback()
+            feedback.joint_positions = self.q.tolist()
+            feedback.joint_velocities = self.dq.tolist()
+            feedback.torques = torques.tolist()
+            # Note: We'll publish this in the trial execution loop
     
     def joint_states_callback(self, msg):
         """Handle joint state messages from Teensy"""
@@ -355,6 +435,20 @@ class ControlNode(Node):
         # Signal trial start to Teensy
         self.start_trial_pub.publish(Bool(data=True))
         
+        # Configure force field for trial
+        self.force_field_enabled = goal.force_field_enabled
+        if self.force_field_enabled:
+            ff_matrix = goal.force_field_matrix
+            self.force_field_matrix = np.array([[ff_matrix[0], ff_matrix[1]], [ff_matrix[2], ff_matrix[3]]])
+            self.get_logger().info(f'✨ Force field enabled: {self.force_field_matrix.tolist()}')
+        else:
+            self.force_field_matrix = np.array([[0.0, 0.0], [0.0, 0.0]])
+            self.get_logger().info('⚫ Force field disabled')
+        
+        # Publish force field configuration
+        self.ff_enabled_pub.publish(Bool(data=self.force_field_enabled))
+        self.ff_value_pub.publish(Float64MultiArray(data=goal.force_field_matrix))
+        
         # Store trial information
         self.current_goal = goal_handle
         self.trial_start_time = self.get_clock().now()
@@ -367,6 +461,7 @@ class ControlNode(Node):
             if goal_handle.is_cancel_requested:
                 self.get_logger().info('🛑 Trial cancelled')
                 self.abort_trial_pub.publish(Bool(data=True))
+                self.current_goal = None
                 goal_handle.canceled()
                 result.success = False
                 return result
@@ -376,9 +471,21 @@ class ControlNode(Node):
             
             # Publish feedback
             if self.q is not None and self.dq is not None:
+                # Calculate torques for feedback
+                try:
+                    ee_pos = self.forward_kinematics(self.q[0], self.q[1])
+                    J = self.jacobian(self.q[0], self.q[1])
+                    ee_vel = J @ self.dq[:2]
+                    ff_forces = np.zeros(2)
+                    if self.force_field_enabled:
+                        ff_forces = self.force_field_matrix @ ee_vel
+                    torques = J.T @ ff_forces
+                except:
+                    torques = np.zeros(2)
+                
                 feedback.joint_positions = self.q.tolist()
                 feedback.joint_velocities = self.dq.tolist()
-                feedback.torques = [0.0, 0.0]  # No torques for now
+                feedback.torques = torques.tolist()
                 goal_handle.publish_feedback(feedback)
             
             # Check if trial is complete
@@ -386,6 +493,7 @@ class ControlNode(Node):
                 self.get_logger().info(f'✅ Trial completed successfully after {elapsed:.1f}s')
                 self.trial_success_pub.publish(Bool(data=True))
                 result.success = True
+                self.current_goal = None
                 goal_handle.succeed()
                 return result
             
@@ -396,6 +504,7 @@ class ControlNode(Node):
         self.get_logger().error('❌ Trial execution interrupted')
         self.abort_trial_pub.publish(Bool(data=True))
         result.success = False
+        self.current_goal = None
         goal_handle.abort()
         return result
     
@@ -408,7 +517,11 @@ class ControlNode(Node):
         
         if self.q is not None:
             status += f"  Current positions: [{self.q[0]:.3f}, {self.q[1]:.3f}]\n"
+            if self.dq is not None:
+                status += f"  Current velocities: [{self.dq[0]:.3f}, {self.dq[1]:.3f}]\n"
             
+        status += f"  Force field: {'✅' if self.force_field_enabled else '❌'} {'Enabled' if self.force_field_enabled else 'Disabled'}\n"
+        
         if self.current_goal:
             status += f"  Current trial: Assay {self.current_goal.request.assay_number}, Trial {self.current_goal.request.trial_number}\n"
             
