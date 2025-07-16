@@ -1,7 +1,0 @@
-version: '3.8'
-
-services:
-  # Override the jiggy-joystick-ros2 service to just keep it running without launching
-  jiggy-joystick-ros2:
-    command: bash -c "source /opt/ros/jazzy/setup.bash && tail -f /dev/null"
-    restart: "no"
