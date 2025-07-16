@@ -197,6 +197,79 @@ cd JiggyJoystick
 
 That's it! The Docker containers will be built automatically and the system will start.
 
+## Standard Operating Procedure (Verified)
+
+Based on extensive testing, the following procedure ensures reliable system operation:
+
+### Quick Start (Recommended)
+1. **Connect Teensy**: Ensure Teensy 4.1 is connected via USB
+2. **Run startup script**: `./scripts/start_system.sh`
+3. **Manual reconnection**: If prompted, physically disconnect and reconnect the Teensy USB cable
+4. **Verify connection**: Check that handshake completes successfully
+
+### Manual Docker Control
+For advanced users who prefer manual control:
+
+1. **Build containers**:
+   ```bash
+   sudo docker-compose build --no-cache
+   ```
+
+2. **Start services**:
+   ```bash
+   sudo docker-compose up -d
+   ```
+
+3. **Reset Teensy** (if handshake fails):
+   ```bash
+   python3 -c "
+   import serial
+   import time
+   try:
+       ser = serial.Serial('/dev/ttyACM0', 115200, timeout=1)
+       ser.dtr = False  # Reset
+       time.sleep(0.1)
+       ser.dtr = True   # Release reset
+       time.sleep(0.5)
+       ser.close()
+       print('✅ Teensy reset successful')
+   except Exception as e:
+       print(f'⚠️  Teensy reset failed: {e}')
+   "
+   ```
+
+4. **Verify handshake**:
+   ```bash
+   sudo docker-compose logs jiggy-joystick-ros2 --tail 10
+   ```
+   Look for "Handshake: ✅ Complete"
+
+5. **Run experiment**:
+   ```bash
+   sudo docker exec -it jiggy-joystick-ros2 bash -c "source /opt/ros/jazzy/setup.bash && source /ros2_ws/install/setup.bash && ros2 run robot_orchestrator experiment_manager_node"
+   ```
+
+### Expected Behavior
+- **Initial startup**: System may show "Handshake: ❌ Waiting" for 30-60 seconds
+- **After Teensy reset**: Handshake should complete within 5-10 seconds
+- **Successful operation**: All trials should be accepted and complete successfully
+- **Data flow**: Joint positions and velocities should update in real-time
+
+### Troubleshooting Connection Issues
+
+**If handshake fails:**
+1. Check Teensy connection: `ls -la /dev/ttyACM*`
+2. Verify micro-ROS node: `sudo docker exec micro-ros-agent bash -c "source /opt/ros/jazzy/setup.bash && ros2 node list"`
+3. Look for `/micro_ros_simulator` in the node list
+4. Try physical disconnection/reconnection of USB cable
+5. Check container logs: `sudo docker-compose logs micro-ros-agent`
+
+**System Status Indicators:**
+- ✅ **Handshake Complete**: Ready for experiments
+- ✅ **Joint States Receiving**: Real-time data flowing
+- ✅ **Action Server Ready**: Can accept trial commands
+- ❌ **Handshake Waiting**: Teensy connection needed
+
 ## Launch Instructions
 
 To run the `robot_orchestrator` package, simply run the main startup script:
