@@ -186,14 +186,80 @@ class ExperimentManagerNode(Node):
         return response
     
     def run_experiment(self):
-        """Run the complete experiment (placeholder for now)"""
+        """Run the complete experiment"""
         self.get_logger().info('🚀 Starting experiment...')
         
-        # For now, just log the configuration
-        for i, assay in enumerate(self.assays):
-            self.get_logger().info(f'  Assay {i+1}: {assay.get("n_trials", 0)} trials, {assay.get("trial_duration", 0)}s each')
+        if not self.assays:
+            self.get_logger().error('❌ No assays configured! Please check assays.yaml')
+            return
         
-        self.get_logger().info('⚠️  Full experiment execution not implemented yet')
+        # Log experiment overview
+        total_trials = sum(assay.get('n_trials', 0) for assay in self.assays)
+        self.get_logger().info(f'Experiment overview: {len(self.assays)} assays, {total_trials} total trials')
+        
+        for i, assay in enumerate(self.assays):
+            n_trials = assay.get('n_trials', 0)
+            duration = assay.get('trial_duration', 0)
+            ff_enabled = assay.get('force_field', {}).get('enabled', False)
+            self.get_logger().info(f'  Assay {i+1}: {n_trials} trials, {duration}s each, force field: {ff_enabled}')
+        
+        # Wait for action server to be available
+        self.get_logger().info('⏳ Waiting for action server...')
+        if not self.trial_action_client.wait_for_server(timeout_sec=10.0):
+            self.get_logger().error('❌ Action server not available!')
+            return
+        
+        self.get_logger().info('✅ Action server ready')
+        
+        # Execute each assay
+        for assay_idx, assay in enumerate(self.assays):
+            self.current_assay = assay_idx
+            self.get_logger().info(f'\n📋 Starting Assay {assay_idx + 1}/{len(self.assays)}')
+            
+            n_trials = assay.get('n_trials', 0)
+            trial_duration = assay.get('trial_duration', 5.0)
+            force_field = assay.get('force_field', {})
+            
+            # Execute each trial in the assay
+            for trial_idx in range(n_trials):
+                self.current_trial = trial_idx
+                self.get_logger().info(f'\n🧪 Starting Trial {trial_idx + 1}/{n_trials}')
+                
+                # Create trial goal
+                goal = TrialAction.Goal()
+                goal.assay_number = assay_idx + 1
+                goal.trial_number = trial_idx + 1
+                goal.duration = trial_duration
+                goal.force_field_enabled = force_field.get('enabled', False)
+                goal.force_field_matrix = force_field.get('matrix', [0.0, 0.0, 0.0, 0.0])
+                
+                # Send goal to action server
+                future = self.trial_action_client.send_goal_async(goal)
+                rclpy.spin_until_future_complete(self, future)
+                
+                goal_handle = future.result()
+                if not goal_handle.accepted:
+                    self.get_logger().error(f'❌ Trial {trial_idx + 1} rejected!')
+                    continue
+                
+                self.get_logger().info(f'✅ Trial {trial_idx + 1} accepted, executing...')
+                
+                # Wait for trial to complete
+                result_future = goal_handle.get_result_async()
+                rclpy.spin_until_future_complete(self, result_future)
+                
+                result = result_future.result()
+                if result.result.success:
+                    self.get_logger().info(f'✅ Trial {trial_idx + 1} completed successfully')
+                else:
+                    self.get_logger().warn(f'⚠️ Trial {trial_idx + 1} failed')
+                
+                # Brief pause between trials
+                time.sleep(1.0)
+            
+            self.get_logger().info(f'✅ Assay {assay_idx + 1} completed')
+        
+        self.get_logger().info('\n🎆 Experiment completed successfully!')
 
 
 class ControlNode(Node):
@@ -202,11 +268,24 @@ class ControlNode(Node):
     def __init__(self):
         super().__init__('control_node')
         
+        # Action server for trial execution
+        self.trial_action_server = ActionServer(
+            self, TrialAction, 'trial_action', 
+            self.execute_trial_callback,
+            goal_callback=self.goal_callback,
+            cancel_callback=self.cancel_callback
+        )
+        
         # Publishers
         self.handshake_pub = self.create_publisher(Bool, '/ros2_handshake', 10)
         self.start_trial_pub = self.create_publisher(Bool, '/start_trial', 10)
         self.abort_trial_pub = self.create_publisher(Bool, '/abort_trial', 10)
         self.trial_success_pub = self.create_publisher(Bool, '/trial_success', 10)
+        
+        # Additional publishers for trial metadata
+        self.assay_pub = self.create_publisher(Int32, '/assay_number', 10)
+        self.trial_pub = self.create_publisher(Int32, '/trial_number', 10)
+        self.trial_status_pub = self.create_publisher(Int32, '/trial_status', 10)
         
         # Subscribers
         self.joint_states_sub = self.create_subscription(
@@ -220,11 +299,14 @@ class ControlNode(Node):
         self.handshake_complete = False
         self.q = None
         self.dq = None
+        self.current_goal = None
+        self.trial_start_time = None
         
         # Timer for status updates
         self.status_timer = self.create_timer(2.0, self.print_status)
         
         self.get_logger().info('🎮 Control Node initialized')
+        self.get_logger().info('Action server "/trial_action" ready')
     
     def joint_states_callback(self, msg):
         """Handle joint state messages from Teensy"""
@@ -244,14 +326,91 @@ class ControlNode(Node):
             self.handshake_complete = True
             self.get_logger().info('✅ Handshake complete! Communication established.')
     
+    def goal_callback(self, goal_request):
+        """Accept or reject incoming action goals"""
+        if not self.handshake_complete:
+            self.get_logger().warn('❌ Goal rejected: Handshake not complete')
+            return GoalResponse.REJECT
+        
+        self.get_logger().info(f'✅ Goal accepted: Assay {goal_request.assay_number}, Trial {goal_request.trial_number}')
+        return GoalResponse.ACCEPT
+    
+    def cancel_callback(self, goal_handle):
+        """Handle goal cancellation requests"""
+        self.get_logger().info('🛑 Trial cancellation requested')
+        return CancelResponse.ACCEPT
+    
+    def execute_trial_callback(self, goal_handle):
+        """Execute a trial based on the action goal"""
+        goal = goal_handle.request
+        result = TrialAction.Result()
+        
+        self.get_logger().info(f'🚀 Starting trial: Assay {goal.assay_number}, Trial {goal.trial_number}')
+        
+        # Publish trial metadata
+        self.assay_pub.publish(Int32(data=goal.assay_number))
+        self.trial_pub.publish(Int32(data=goal.trial_number))
+        self.trial_status_pub.publish(Int32(data=1))  # Status: Setup successful
+        
+        # Signal trial start to Teensy
+        self.start_trial_pub.publish(Bool(data=True))
+        
+        # Store trial information
+        self.current_goal = goal_handle
+        self.trial_start_time = self.get_clock().now()
+        
+        # Execute trial for the specified duration
+        trial_duration = goal.duration
+        feedback = TrialAction.Feedback()
+        
+        while rclpy.ok():
+            if goal_handle.is_cancel_requested:
+                self.get_logger().info('🛑 Trial cancelled')
+                self.abort_trial_pub.publish(Bool(data=True))
+                goal_handle.canceled()
+                result.success = False
+                return result
+            
+            # Calculate elapsed time
+            elapsed = (self.get_clock().now() - self.trial_start_time).nanoseconds / 1e9
+            
+            # Publish feedback
+            if self.q is not None and self.dq is not None:
+                feedback.joint_positions = self.q.tolist()
+                feedback.joint_velocities = self.dq.tolist()
+                feedback.torques = [0.0, 0.0]  # No torques for now
+                goal_handle.publish_feedback(feedback)
+            
+            # Check if trial is complete
+            if elapsed >= trial_duration:
+                self.get_logger().info(f'✅ Trial completed successfully after {elapsed:.1f}s')
+                self.trial_success_pub.publish(Bool(data=True))
+                result.success = True
+                goal_handle.succeed()
+                return result
+            
+            # Sleep briefly
+            time.sleep(0.01)
+        
+        # If we get here, something went wrong
+        self.get_logger().error('❌ Trial execution interrupted')
+        self.abort_trial_pub.publish(Bool(data=True))
+        result.success = False
+        goal_handle.abort()
+        return result
+    
     def print_status(self):
         """Print current status"""
         status = f"🎮 Control Status:\n"
         status += f"  Handshake: {'✅' if self.handshake_complete else '❌'} {'Complete' if self.handshake_complete else 'Waiting'}\n"
         status += f"  Joint States: {'✅' if self.q is not None else '❌'} {'Receiving' if self.q is not None else 'No data'}\n"
+        status += f"  Action Server: {'✅' if self.trial_action_server else '❌'} {'Ready' if self.trial_action_server else 'Not ready'}\n"
         
         if self.q is not None:
             status += f"  Current positions: [{self.q[0]:.3f}, {self.q[1]:.3f}]\n"
+            
+        if self.current_goal:
+            status += f"  Current trial: Assay {self.current_goal.request.assay_number}, Trial {self.current_goal.request.trial_number}\n"
             
         self.get_logger().info(status)
 
