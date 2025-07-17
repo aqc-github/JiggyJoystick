@@ -5,11 +5,16 @@
 JiggyJoystick is a user-friendly system for running experiments on a 2-degrees-of-freedom (2-DOF) robotic arm. It simplifies robotic arm control using Docker containers and micro-ROS for communication with microcontrollers, designed to support beginners and non-experts.
 
 ## Key Features
+- **Dynamic Force Fields**: Leverage isotropic, anisotropic, oriented, and time-dependent viscous force fields for comprehensive experimentation
 - **Containerization**: Easy to set up and manage experiments using Docker
 - **Automated Control and Logging**: Control the robotic arm and log data automatically
 - **Dynamic Configuration**: Adjust experiment settings on the fly with ROS 2
 - **Micro-ROS Support**: Communicate with microcontrollers (like Teensy 4.1)
 - **CSV Data Logging**: Automatic data collection for analysis
+
+## Lessons Learned
+- Extensive testing is vital for dynamic systems to prevent unexpected behavior.
+- Improvements in automated startup processes enhance reliability.
 
 ## Quick Start
 
@@ -95,7 +100,12 @@ The Teensy firmware includes several robust features:
 - **Graceful Error Handling**: No longer gets stuck in infinite error loops
 - **Handshake Protocol**: Implements a proper handshake sequence before starting trials
 - **Trial State Management**: Manages setup, active, and completion states
-- **Force Field Control**: Applies configurable force fields during trials
+- **Dynamic Force Field Control**: Applies configurable viscous force fields during trials
+  - Isotropic viscous damping
+  - Anisotropic viscous damping
+  - Oriented viscous damping
+  - Time-dependent viscous damping
+  - Static force fields (original behavior)
 
 
 
@@ -104,7 +114,12 @@ The Teensy firmware includes several robust features:
 The experiment involves running a series of **assays**, each consisting of multiple **trials**, on a 2-DOF robotic arm. Each trial applies specific control parameters (e.g., force fields) for a defined duration, and the system logs joint positions, velocities, torques, and other metadata. The experiment is configured via a YAML file (`assays.yaml`), which specifies:
 - The number of assays and trials per assay.
 - Trial durations.
-- Force field settings (enabled/disabled and a 2x2 matrix for force calculations).
+- **Dynamic force field settings** with multiple types:
+  - Static force fields (original 2x2 matrix)
+  - Viscous isotropic (uniform damping)
+  - Viscous anisotropic (different X/Y damping)
+  - Viscous oriented (rotated damping matrix)
+  - Viscous time-dependent (damping changes over time)
 
 The system is designed to:
 - Load experiment configurations dynamically.
@@ -304,35 +319,65 @@ Once the system is running, you can monitor it in several ways:
 
 ## Configuration
 
-The experiment is configured via `assays.yaml` in `~/ros2_ws/src/robot_orchestrator/config/`. Example:
+The experiment is configured via `assays.yaml` in `~/ros2_ws/src/robot_orchestrator/config/`. 
+
+### Dynamic Force Field Configuration
+
+The system now supports multiple types of force fields configured using a new format:
+
 ```yaml
 assays:
-  - name: assay1
-    n_trials: 2
-    trial_duration: 10.0
-    force_field:
-      enabled: true
-      matrix: [1.0, 0.0, 0.0, 1.0]
-  - name: assay2
-    n_trials: 2
-    trial_duration: 10.0
-    force_field:
-      enabled: false
-      matrix: [0.0, 0.0, 0.0, 0.0]
-  - name: assay3
-    n_trials: 2
-    trial_duration: 10.0
-    force_field:
-      enabled: true
-      matrix: [0.5, 0.0, 0.0, 0.5]
+    # Baseline - No force field
+    - name: "baseline"
+      n_trials: 3
+      trial_duration: 10.0
+      force_field:
+          enabled: false
+          matrix: [0.0, 0.0, 0.0, 0.0]
+    
+    # Isotropic viscous field
+    - name: "viscous_isotropic"
+      n_trials: 3
+      trial_duration: 10.0
+      force_field:
+          enabled: true
+          matrix: [1, 10.0]  # [type_id, damping]
+    
+    # Anisotropic viscous field
+    - name: "viscous_anisotropic"
+      n_trials: 3
+      trial_duration: 10.0
+      force_field:
+          enabled: true
+          matrix: [2, 15.0, 5.0]  # [type_id, damping_x, damping_y]
+    
+    # Time-dependent viscous field
+    - name: "viscous_time_dependent"
+      n_trials: 3
+      trial_duration: 15.0
+      force_field:
+          enabled: true
+          matrix: [4, 0.0, 25.0, 10.0]  # [type_id, damping_initial, damping_final, transition_time]
 ```
+
+### Force Field Types
+
+- **Type 0**: Static force field (original behavior)
+- **Type 1**: Viscous isotropic (uniform damping)
+- **Type 2**: Viscous anisotropic (different X/Y damping)
+- **Type 3**: Viscous oriented (rotated damping matrix)
+- **Type 4**: Viscous time-dependent (damping changes over time)
+
+**See `docs/DYNAMIC_FORCE_FIELDS.md` for detailed documentation.**
+
+### Configuration Fields
 
 - **Fields**:
   - `name`: Assay identifier (informational).
   - `n_trials`: Number of trials per assay.
   - `trial_duration`: Duration of each trial in seconds.
   - `force_field.enabled`: Whether to apply a force field.
-  - `force_field.matrix`: 2x2 matrix for force calculations (flattened to a list).
+  - `force_field.matrix`: Force field parameters `[type_id, param1, param2, ...]`.
 
 To reload a new configuration during runtime:
 ```bash

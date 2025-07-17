@@ -311,6 +311,11 @@ class ControlNode(Node):
         self.force_field_enabled = False
         self.force_field_matrix = np.array([[0.0, 0.0], [0.0, 0.0]])
         
+        # Dynamic force field parameters
+        self.ff_type = 'static'  # 'static', 'viscous_iso', 'viscous_aniso', 'viscous_oriented', 'viscous_time'
+        self.ff_params = {}
+        self.ff_start_time = None
+        
         # Robot parameters (2-DOF arm)
         self.l1 = 30.0 / 1000  # Link 1 length in meters
         self.l2 = 30.0 / 1000  # Link 2 length in meters
@@ -350,6 +355,67 @@ class ControlNode(Node):
         
         return J
     
+    def calculate_dynamic_force_field(self, ee_pos, ee_vel):
+        """Calculate dynamic force field forces based on type and parameters"""
+        if self.ff_type == 'static':
+            # Original static force field
+            return self.force_field_matrix @ ee_vel
+            
+        elif self.ff_type == 'viscous_iso':
+            # Isotropic viscous field: F = -b * v
+            b = self.ff_params.get('damping', 0.0)
+            return -b * ee_vel
+            
+        elif self.ff_type == 'viscous_aniso':
+            # Anisotropic viscous field: F = -diag(bx, by) * v
+            bx = self.ff_params.get('damping_x', 0.0)
+            by = self.ff_params.get('damping_y', 0.0)
+            B = np.array([[bx, 0.0], [0.0, by]])
+            return -B @ ee_vel
+            
+        elif self.ff_type == 'viscous_oriented':
+            # Oriented viscous field: rotated damping matrix
+            b_major = self.ff_params.get('damping_major', 0.0)
+            b_minor = self.ff_params.get('damping_minor', 0.0)
+            angle = self.ff_params.get('angle', 0.0)  # in radians
+            
+            # Create damping matrix in principal axes
+            B_principal = np.array([[b_major, 0.0], [0.0, b_minor]])
+            
+            # Rotation matrix
+            c, s = np.cos(angle), np.sin(angle)
+            R = np.array([[c, -s], [s, c]])
+            
+            # Rotate damping matrix: B = R * B_principal * R^T
+            B = R @ B_principal @ R.T
+            return -B @ ee_vel
+            
+        elif self.ff_type == 'viscous_time':
+            # Time-dependent viscous field
+            if self.ff_start_time is None:
+                return np.zeros(2)
+                
+            elapsed = (self.get_clock().now() - self.ff_start_time).nanoseconds / 1e9
+            
+            # Get time-dependent parameters
+            b_initial = self.ff_params.get('damping_initial', 0.0)
+            b_final = self.ff_params.get('damping_final', 0.0)
+            transition_time = self.ff_params.get('transition_time', 1.0)
+            
+            # Linear interpolation
+            if elapsed <= transition_time:
+                t_norm = elapsed / transition_time
+                b_current = b_initial + (b_final - b_initial) * t_norm
+            else:
+                b_current = b_final
+                
+            return -b_current * ee_vel
+            
+        else:
+            # Unknown type, return zero forces
+            self.get_logger().warn(f'Unknown force field type: {self.ff_type}')
+            return np.zeros(2)
+    
     def control_loop(self):
         """Main control loop running at 100Hz"""
         if self.q is None or self.dq is None:
@@ -367,7 +433,7 @@ class ControlNode(Node):
         # Calculate force field forces
         ff_forces = np.zeros(2)
         if self.force_field_enabled:
-            ff_forces = self.force_field_matrix @ ee_vel
+            ff_forces = self.calculate_dynamic_force_field(ee_pos, ee_vel)
         
         # Convert forces to joint torques using Jacobian transpose
         try:
@@ -438,11 +504,15 @@ class ControlNode(Node):
         # Configure force field for trial
         self.force_field_enabled = goal.force_field_enabled
         if self.force_field_enabled:
-            ff_matrix = goal.force_field_matrix
-            self.force_field_matrix = np.array([[ff_matrix[0], ff_matrix[1]], [ff_matrix[2], ff_matrix[3]]])
-            self.get_logger().info(f'✨ Force field enabled: {self.force_field_matrix.tolist()}')
+            # Parse force field configuration
+            self.parse_force_field_config(goal.force_field_matrix)
+            self.ff_start_time = self.get_clock().now()
+            self.get_logger().info(f'✨ Force field enabled: type={self.ff_type}, params={self.ff_params}')
         else:
             self.force_field_matrix = np.array([[0.0, 0.0], [0.0, 0.0]])
+            self.ff_type = 'static'
+            self.ff_params = {}
+            self.ff_start_time = None
             self.get_logger().info('⚫ Force field disabled')
         
         # Publish force field configuration
@@ -478,7 +548,7 @@ class ControlNode(Node):
                     ee_vel = J @ self.dq[:2]
                     ff_forces = np.zeros(2)
                     if self.force_field_enabled:
-                        ff_forces = self.force_field_matrix @ ee_vel
+                        ff_forces = self.calculate_dynamic_force_field(ee_pos, ee_vel)
                     torques = J.T @ ff_forces
                 except:
                     torques = np.zeros(2)
@@ -526,6 +596,64 @@ class ControlNode(Node):
             status += f"  Current trial: Assay {self.current_goal.request.assay_number}, Trial {self.current_goal.request.trial_number}\n"
             
         self.get_logger().info(status)
+    
+    def parse_force_field_config(self, ff_matrix):
+        """Parse force field configuration from matrix format"""
+        # Convert matrix to configuration
+        # Format: [type_id, param1, param2, param3, ...]
+        # type_id: 0=static, 1=viscous_iso, 2=viscous_aniso, 3=viscous_oriented, 4=viscous_time
+        
+        if len(ff_matrix) < 1:
+            self.ff_type = 'static'
+            self.force_field_matrix = np.array([[0.0, 0.0], [0.0, 0.0]])
+            self.ff_params = {}
+            return
+            
+        type_id = int(ff_matrix[0])
+        
+        if type_id == 0:  # Static (original behavior)
+            self.ff_type = 'static'
+            if len(ff_matrix) >= 5:
+                self.force_field_matrix = np.array([[ff_matrix[1], ff_matrix[2]], [ff_matrix[3], ff_matrix[4]]])
+            else:
+                self.force_field_matrix = np.array([[0.0, 0.0], [0.0, 0.0]])
+            self.ff_params = {}
+            
+        elif type_id == 1:  # Viscous isotropic
+            self.ff_type = 'viscous_iso'
+            self.ff_params = {
+                'damping': ff_matrix[1] if len(ff_matrix) > 1 else 0.0
+            }
+            
+        elif type_id == 2:  # Viscous anisotropic
+            self.ff_type = 'viscous_aniso'
+            self.ff_params = {
+                'damping_x': ff_matrix[1] if len(ff_matrix) > 1 else 0.0,
+                'damping_y': ff_matrix[2] if len(ff_matrix) > 2 else 0.0
+            }
+            
+        elif type_id == 3:  # Viscous oriented
+            self.ff_type = 'viscous_oriented'
+            self.ff_params = {
+                'damping_major': ff_matrix[1] if len(ff_matrix) > 1 else 0.0,
+                'damping_minor': ff_matrix[2] if len(ff_matrix) > 2 else 0.0,
+                'angle': ff_matrix[3] if len(ff_matrix) > 3 else 0.0  # in radians
+            }
+            
+        elif type_id == 4:  # Viscous time-dependent
+            self.ff_type = 'viscous_time'
+            self.ff_params = {
+                'damping_initial': ff_matrix[1] if len(ff_matrix) > 1 else 0.0,
+                'damping_final': ff_matrix[2] if len(ff_matrix) > 2 else 0.0,
+                'transition_time': ff_matrix[3] if len(ff_matrix) > 3 else 1.0
+            }
+            
+        else:
+            # Unknown type, default to static
+            self.get_logger().warn(f'Unknown force field type ID: {type_id}, defaulting to static')
+            self.ff_type = 'static'
+            self.force_field_matrix = np.array([[0.0, 0.0], [0.0, 0.0]])
+            self.ff_params = {}
 
 
 class LoggerNode(Node):
