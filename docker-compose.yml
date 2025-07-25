@@ -29,6 +29,7 @@ services:
     network_mode: host
     volumes:
       - ./logs:/ros2_ws/logs
+      - ./analysis_plots:/ros2_ws/analysis_output
       - ./ros2_ws/src:/ros2_ws/src
       - /dev:/dev
     devices:

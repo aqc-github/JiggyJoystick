@@ -120,6 +120,23 @@ class ConfigLoader:
             'rated_current': 0.1
         }
     
+    def get_experiment_config(self):
+        """Get experiment configuration with start/end positions and timing"""
+        if self.config:
+            experiment_config = self.config.get('experiment', {})
+            return {
+                'start_position': experiment_config.get('start_position', [40.0, 25.0]),  # mm
+                'end_position': experiment_config.get('end_position', [25.0, 25.0]),      # mm
+                'reset_duration': experiment_config.get('reset_duration', 3.0),           # seconds
+                'setup_duration': experiment_config.get('setup_duration', 2.0)            # seconds
+            }
+        return {
+            'start_position': [40.0, 25.0],
+            'end_position': [25.0, 25.0],
+            'reset_duration': 3.0,
+            'setup_duration': 2.0
+        }
+    
     def _log_robot_config(self):
         """Log detailed robot configuration information"""
         if not self.robot_config:

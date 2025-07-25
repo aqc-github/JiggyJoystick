@@ -1,3 +1,10 @@
+# Experiment configuration with consistent start/end positions
+experiment:
+  start_position: [40.0, 25.0]  # Start position in mm (x, y)
+  end_position: [25.0, 25.0]    # Target end position in mm (x, y)
+  reset_duration: 3.0           # Time to reset between assays (seconds)
+  setup_duration: 2.0           # Setup time before each trial starts (seconds)
+
 assays:
   # Isotropic viscous field
   - name: "viscous_isotropic"

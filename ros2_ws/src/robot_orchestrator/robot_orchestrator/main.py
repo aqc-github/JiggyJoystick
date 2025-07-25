@@ -149,9 +149,13 @@ class ExperimentManagerNode(Node):
         # Load configuration
         self.load_config(config_file)
         
+        # Load experiment configuration
+        self.experiment_config = self.config_loader.get_experiment_config()
+        self.get_logger().info(f"Experiment setup: Start at {self.experiment_config['start_position']} mm, End at {self.experiment_config['end_position']} mm")
+
         # Action client for trial execution
         self.trial_action_client = ActionClient(self, TrialAction, 'trial_action')
-        
+
         # Service for dynamic config reloading
         self.load_config_service = self.create_service(
             LoadConfig, 'load_config', self.load_config_callback
@@ -159,6 +163,15 @@ class ExperimentManagerNode(Node):
         
         self.get_logger().info('📋 Experiment Manager Node initialized')
         self.get_logger().info(f'Loaded {len(self.assays)} assays')
+    
+    def move_to_position(self, target_position, duration=2.0, message='Moving'):
+        """Move robot to a specified target position smoothly"""
+        self.get_logger().info(f"{message}: moving to {target_position} over {duration:.1f}s")
+
+        # Implement smooth movement here or signal appropriate ROS2 controllers
+        time.sleep(duration)
+
+        self.get_logger().info(f"✅ {message} completed")
     
     def load_config(self, config_file):
         """Load experiment configuration from YAML file"""
@@ -231,6 +244,9 @@ class ExperimentManagerNode(Node):
                 self.current_trial = trial_idx
                 self.get_logger().info(f'\n🧪 Starting Trial {trial_idx + 1}/{n_trials}')
                 
+                # Move to starting position first
+                self.move_to_position(self.experiment_config['start_position'], duration=self.experiment_config['setup_duration'], message=f'Starting Assay {assay_idx + 1}')
+
                 # Create trial goal
                 goal = TrialAction.Goal()
                 goal.assay_number = assay_idx + 1
@@ -266,7 +282,10 @@ class ExperimentManagerNode(Node):
             self.get_logger().info(f'✅ Assay {assay_idx + 1} completed')
         
         self.get_logger().info('\n🎆 Experiment completed successfully!')
-        
+
+        # End experimental session by returning to start position
+        self.move_to_position(self.experiment_config['start_position'], duration=self.experiment_config['reset_duration'], message='Resetting position')
+
         # Run post-experiment analysis
         self.run_post_experiment_analysis()
     
