@@ -1,32 +1,42 @@
 assays:
-    # Isotropic viscous field
-    - name: "viscous_isotropic"
-      n_trials: 1
-      trial_duration: 8.0
-      force_field:
-          enabled: true
-          matrix: [1, 10.0]  # [type_id, damping]
-    
-    # Anisotropic viscous field
-    - name: "viscous_anisotropic"
-      n_trials: 1
-      trial_duration: 8.0
-      force_field:
-          enabled: true
-          matrix: [2, 15.0, 5.0]  # [type_id, damping_x, damping_y]
-    
-    # Oriented viscous field (45 degrees)
-    - name: "viscous_oriented"
-      n_trials: 1
-      trial_duration: 8.0
-      force_field:
-          enabled: true
-          matrix: [3, 20.0, 5.0, 0.7854]  # [type_id, damping_major, damping_minor, angle_rad]
-    
-    # Time-dependent viscous field
-    - name: "viscous_time_dependent"
-      n_trials: 1
-      trial_duration: 12.0
-      force_field:
-          enabled: true
-          matrix: [4, 0.0, 25.0, 8.0]  # [type_id, damping_initial, damping_final, transition_time]
+  # Isotropic viscous field
+  - name: "viscous_isotropic"
+    n_trials: 1
+    trial_duration: 8.0
+    force_field:
+      enabled: true
+      matrix: [1, 10.0] # [type_id, damping]
+
+  # Anisotropic viscous field
+  - name: "viscous_anisotropic"
+    n_trials: 1
+    trial_duration: 8.0
+    force_field:
+      enabled: true
+      matrix: [2, 15.0, 5.0] # [type_id, damping_x, damping_y]
+
+  # Oriented viscous field (45 degrees)
+  - name: "viscous_oriented"
+    n_trials: 1
+    trial_duration: 8.0
+    force_field:
+      enabled: true
+      matrix: [3, 20.0, 5.0, 0.7854] # [type_id, damping_major, damping_minor, angle_rad]
+
+  # Time-dependent viscous field
+  - name: "viscous_time_dependent"
+    n_trials: 1
+    trial_duration: 12.0
+    force_field:
+      enabled: true
+      matrix: [4, 0.0, 25.0, 8.0] # [type_id, damping_initial, damping_final, transition_time]
+
+kinematics:
+  # 5-bar parallel operator kinematics and dynamics parameters
+  - chain: "5_bar_parallel"
+    link_length: [20.0, 40.0, 50.0] # proximal link length, distal length and base (locked) length
+    motor config:
+      stall_torque: 0.32 # kgcm
+      stall_current: 0.2 # A
+      rated_torque: 19.6
+      rated_current: 0.1

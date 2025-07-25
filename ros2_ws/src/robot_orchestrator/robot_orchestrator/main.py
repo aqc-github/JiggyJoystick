@@ -14,6 +14,8 @@ import os
 from datetime import datetime
 from custom_interfaces.action import TrialAction
 from custom_interfaces.srv import LoadConfig
+from .five_bar_kinematics import FiveBarKinematics
+from .config_loader import ConfigLoader
 
 
 class SimpleTestNode(Node):
@@ -138,6 +140,7 @@ class ExperimentManagerNode(Node):
         config_file = self.get_parameter('config_file').get_parameter_value().string_value
         
         # Configuration
+        self.config_loader = ConfigLoader(config_file)
         self.config = None
         self.assays = []
         self.current_assay = 0
@@ -160,14 +163,17 @@ class ExperimentManagerNode(Node):
     def load_config(self, config_file):
         """Load experiment configuration from YAML file"""
         try:
-            package_share_dir = get_package_share_directory('robot_orchestrator')
-            config_path = os.path.join(package_share_dir, 'config', config_file)
-            
-            with open(config_path, 'r') as f:
-                self.config = yaml.safe_load(f)
-            
-            self.assays = self.config.get('assays', [])
-            self.get_logger().info(f'✅ Loaded {len(self.assays)} assays from {config_file}')
+            self.config_loader = ConfigLoader(config_file)
+            if self.config_loader.load_config():
+                self.config = self.config_loader.config
+                self.assays = self.config_loader.get_assays_config()
+                robot_config = self.config_loader.get_robot_config()
+                
+                self.get_logger().info(f'✅ Loaded {len(self.assays)} assays from {config_file}')
+                self.get_logger().info(f'🤖 Robot config: {robot_config["chain"]} with links {self.config_loader.get_link_lengths()}')
+            else:
+                self.get_logger().error(f'❌ Failed to load config from {config_file}')
+                self.assays = []
             
         except Exception as e:
             self.get_logger().error(f'❌ Failed to load config: {e}')
@@ -268,6 +274,23 @@ class ControlNode(Node):
     def __init__(self):
         super().__init__('control_node')
         
+        # Load robot configuration
+        self.config_loader = ConfigLoader()
+        if not self.config_loader.load_config():
+            self.get_logger().error('❌ Failed to load robot configuration!')
+        
+        # Get robot parameters from configuration
+        l_a, l_b, l_c = self.config_loader.get_link_lengths()
+        self.motor_config = self.config_loader.get_motor_config()
+        
+        # Initialize 5-bar parallel robot kinematics
+        # Convert from mm to meters for calculations
+        self.kinematics = FiveBarKinematics(l_a / 1000.0, l_b / 1000.0, l_c / 1000.0)
+        
+        self.get_logger().info(f'🤖 Robot Configuration Loaded:')
+        self.get_logger().info(f'  Link lengths: l_a={l_a}mm, l_b={l_b}mm, l_c={l_c}mm')
+        self.get_logger().info(f'  Motor config: {self.motor_config}')
+        
         # Action server for trial execution
         self.trial_action_server = ActionServer(
             self, TrialAction, 'trial_action', 
@@ -316,10 +339,8 @@ class ControlNode(Node):
         self.ff_params = {}
         self.ff_start_time = None
         
-        # Robot parameters (2-DOF arm)
-        self.l1 = 30.0 / 1000  # Link 1 length in meters
-        self.l2 = 30.0 / 1000  # Link 2 length in meters
-        self.base_distance = 40.0 / 1000  # Base separation in meters
+        # Robot parameters are now loaded from configuration
+        # Parameters stored in self.kinematics and self.motor_config
         
         # Control loop timer (100 Hz)
         self.control_timer = self.create_timer(0.01, self.control_loop)
@@ -330,28 +351,34 @@ class ControlNode(Node):
         self.get_logger().info('🎮 Control Node initialized')
         self.get_logger().info('Action server "/trial_action" ready')
     
-    def forward_kinematics(self, q1, q2):
-        """Calculate forward kinematics for 2-DOF arm"""
-        # Convert to radians if needed (assuming already in radians)
-        x1 = self.l1 * np.cos(q1)
-        y1 = self.l1 * np.sin(q1)
-        
-        x2 = x1 + self.l2 * np.cos(q1 + q2)
-        y2 = y1 + self.l2 * np.sin(q1 + q2)
-        
-        return np.array([x2, y2])
+    def forward_kinematics(self, theta1, theta2):
+        """Calculate forward kinematics for 5-bar parallel robot"""
+        return self.kinematics.direct_kinematics(theta1, theta2)
     
-    def jacobian(self, q1, q2):
-        """Calculate Jacobian matrix for 2-DOF arm"""
-        J = np.zeros((2, 2))
+    def inverse_kinematics(self, x, y):
+        """Calculate inverse kinematics for 5-bar parallel robot"""
+        return self.kinematics.inverse_kinematics(x, y)
+    
+    def jacobian(self, theta1, theta2):
+        """Calculate Jacobian matrix for 5-bar parallel robot"""
+        # Numerical differentiation for Jacobian calculation
+        delta = 1e-6
         
-        # dx/dq1, dx/dq2
-        J[0, 0] = -self.l1 * np.sin(q1) - self.l2 * np.sin(q1 + q2)
-        J[0, 1] = -self.l2 * np.sin(q1 + q2)
+        # Current position
+        p0 = self.forward_kinematics(theta1, theta2)
         
-        # dy/dq1, dy/dq2
-        J[1, 0] = self.l1 * np.cos(q1) + self.l2 * np.cos(q1 + q2)
-        J[1, 1] = self.l2 * np.cos(q1 + q2)
+        # Partial derivatives w.r.t. theta1
+        p1 = self.forward_kinematics(theta1 + delta, theta2)
+        dxdth1 = (p1[0] - p0[0]) / delta
+        dydth1 = (p1[1] - p0[1]) / delta
+        
+        # Partial derivatives w.r.t. theta2
+        p2 = self.forward_kinematics(theta1, theta2 + delta)
+        dxdth2 = (p2[0] - p0[0]) / delta
+        dydth2 = (p2[1] - p0[1]) / delta
+        
+        J = np.array([[dxdth1, dxdth2],
+                      [dydth1, dydth2]])
         
         return J
     
@@ -672,20 +699,66 @@ class LoggerNode(Node):
         
         # Data storage
         self.data = {}
+        self.current_assay = None
+        self.current_trial = None
+        self.trial_active = False
         
         # Subscribers
         self.joint_states_sub = self.create_subscription(
             JointState, '/joint_states', self.joint_states_callback, 10
         )
         
+        # Subscribe to trial metadata
+        self.assay_sub = self.create_subscription(
+            Int32, '/assay_number', self.assay_callback, 10
+        )
+        self.trial_sub = self.create_subscription(
+            Int32, '/trial_number', self.trial_callback, 10
+        )
+        self.trial_start_sub = self.create_subscription(
+            Bool, '/start_trial', self.trial_start_callback, 10
+        )
+        self.trial_success_sub = self.create_subscription(
+            Bool, '/trial_success', self.trial_success_callback, 10
+        )
+        
         self.get_logger().info('📊 Logger Node initialized')
         self.get_logger().info(f'Logs will be saved to: {self.log_dir}')
+    
+    def assay_callback(self, msg):
+        """Handle assay number updates"""
+        self.current_assay = msg.data
+        
+    def trial_callback(self, msg):
+        """Handle trial number updates"""
+        self.current_trial = msg.data
+        
+    def trial_start_callback(self, msg):
+        """Handle trial start signals"""
+        if msg.data and self.current_assay is not None:
+            # Close any existing CSV file
+            if self.csv_file:
+                self.close_csv_writer()
+            
+            # Create new CSV file for this trial
+            self.create_csv_writer(self.current_assay)
+            self.trial_active = True
+            
+    def trial_success_callback(self, msg):
+        """Handle trial completion signals"""
+        if msg.data:
+            self.trial_active = False
+            self.close_csv_writer()
     
     def joint_states_callback(self, msg):
         """Handle joint state messages for logging"""
         self.data['joint_positions'] = msg.position
         self.data['joint_velocities'] = msg.velocity
         self.data['joint_efforts'] = msg.effort
+        
+        # Log data to CSV if writer is active and trial is running
+        if self.csv_writer and self.trial_active:
+            self.log_data()
         
         # For now, just log occasionally
         if hasattr(self, 'log_count'):
@@ -695,6 +768,48 @@ class LoggerNode(Node):
             
         if self.log_count % 500 == 1:  # Log every 500 messages (~10 seconds)
             self.get_logger().info(f'📊 Logged {self.log_count} joint state messages')
+    
+    def create_csv_writer(self, assay_number):
+        """Create a CSV writer for logging trial data"""
+        current_time = datetime.now().strftime('%H-%M-%S-%d-%m')
+        filename = f'{current_time}-assay{assay_number}.csv'
+        file_path = os.path.join(self.log_dir, filename)
+
+        self.csv_file = open(file_path, mode='w', newline='')
+        self.csv_writer = csv.writer(self.csv_file)
+
+        # Write headers
+        headers = ['timestamp', 'joint_positions', 'joint_velocities', 'joint_efforts']
+        self.csv_writer.writerow(headers)
+        
+        self.get_logger().info(f'Created CSV log file: {filename}')
+
+    def log_data(self):
+        """Log current data to CSV"""
+        if not self.csv_writer:
+            return
+
+        # Get current time
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]  # Include milliseconds
+
+        row = [
+            current_time,
+            list(self.data.get('joint_positions', [])),
+            list(self.data.get('joint_velocities', [])),
+            list(self.data.get('joint_efforts', []))
+        ]
+        self.csv_writer.writerow(row)
+        
+        # Flush to ensure data is written immediately
+        self.csv_file.flush()
+
+    def close_csv_writer(self):
+        """Close the CSV file"""
+        if self.csv_file:
+            self.csv_file.close()
+            self.csv_file = None
+            self.csv_writer = None
+            self.get_logger().info('CSV log file closed')
 
 
 # Entry points for each node
@@ -732,6 +847,7 @@ def logger_main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        node.close_csv_writer()
         node.destroy_node()
         rclpy.shutdown()
 
