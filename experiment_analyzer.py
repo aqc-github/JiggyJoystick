@@ -12,39 +12,58 @@ import os
 import json
 import argparse
 from datetime import datetime
+from five_bar_kinematics import FiveBarKinematics
 
 
 class JiggyJoystickAnalyzer:
     def __init__(self, log_directory="/ros2_ws/logs"):
         self.log_directory = log_directory
-        self.robot_params = {
-            'L1': 0.0635,  # Link 1 length (m)
-            'L2': 0.0635,  # Link 2 length (m)
-            'd': 0.0508,   # Base width (m)
-        }
+        # Load robot parameters from experiment configuration
+        self.robot_params = self.load_robot_parameters()
+        # Initialize 5-bar parallel robot kinematics
+        self.kinematics = FiveBarKinematics(
+            self.robot_params['L1'], 
+            self.robot_params['L2'], 
+            self.robot_params['d']
+        )
+
+    def load_robot_parameters(self):
+        """Load robot parameters from the configuration file"""
+        config_path = '/home/albertoquintana/Documentos/JiggyJoystick/ros2_ws/src/robot_orchestrator/config/assays.yaml'
+        try:
+            with open(config_path, 'r') as conf_file:
+                import yaml
+                config = yaml.safe_load(conf_file)
+                lengths = config['kinematics'][0]['link_length']
+                
+                # Also load experiment positions (keep in mm for plotting)
+                experiment_config = config.get('experiment', {})
+                self.start_position = np.array(experiment_config.get('start_position', [40.0, 25.0]))  # Keep in mm
+                self.end_position = np.array(experiment_config.get('end_position', [25.0, 25.0]))  # Keep in mm
+                
+                return {
+                    'L1': lengths[0] / 1000.0,  # Convert to meters
+                    'L2': lengths[1] / 1000.0,  # Convert to meters
+                    'd': lengths[2] / 1000.0,   # Convert to meters
+                }
+        except Exception as e:
+            print(f"Error loading robot parameters: {e}")
+            # Default experiment positions (keep in mm)
+            self.start_position = np.array([40.0, 25.0])
+            self.end_position = np.array([25.0, 25.0])
+            return {
+                'L1': 0.0635,  # Default values
+                'L2': 0.0635,
+                'd': 0.0508,
+            }
         
     def forward_kinematics(self, theta1, theta2):
         """
-        Compute end-effector position from joint angles.
+        Compute end-effector position from joint angles using proper 5-bar parallel robot kinematics.
         Returns (x, y) position of end-effector.
         """
-        L1, L2, d = self.robot_params['L1'], self.robot_params['L2'], self.robot_params['d']
-        
-        # Position of joint 1 end (left arm)
-        x1 = L1 * np.cos(theta1)
-        y1 = L1 * np.sin(theta1)
-        
-        # Position of joint 2 end (right arm, offset by base width)
-        x2 = d + L2 * np.cos(theta2)
-        y2 = L2 * np.sin(theta2)
-        
-        # End-effector is at the intersection of the two circles
-        # For simplicity, we'll use the midpoint approximation
-        # In a real implementation, you'd solve the circle intersection
-        x_ee = (x1 + x2) / 2
-        y_ee = (y1 + y2) / 2
-        
-        return x_ee, y_ee
+        position = self.kinematics.direct_kinematics(theta1, theta2)
+        return position[0], position[1]
     
     def load_experiment_data(self, pattern="*assay*.csv"):
         """Load all CSV files matching the pattern."""
@@ -82,6 +101,83 @@ class JiggyJoystickAnalyzer:
             trajectories.append([x_ee, y_ee])
             
         return np.array(trajectories)
+    
+    def plot_workspace_boundary(self, ax):
+        """Plot the robot's actual workspace boundary"""
+        # Generate workspace boundary by sampling joint angles
+        boundary_points = []
+        
+        # Sample the joint space to find workspace boundary
+        theta1_range = np.linspace(-0.5, 0.5, 100)
+        theta2_range = np.linspace(-0.5, 0.5, 100)
+        
+        for theta1 in theta1_range:
+            for theta2 in [-0.5, 0.5]:  # Extremes of theta2
+                pos = self.kinematics.direct_kinematics(theta1, theta2)
+                if not np.isnan(pos[0]) and not np.isnan(pos[1]):
+                    boundary_points.append(pos * 1000.0)
+                    
+        for theta2 in theta2_range:
+            for theta1 in [-0.5, 0.5]:  # Extremes of theta1
+                pos = self.kinematics.direct_kinematics(theta1, theta2)
+                if not np.isnan(pos[0]) and not np.isnan(pos[1]):
+                    boundary_points.append(pos * 1000.0)
+        
+        if boundary_points:
+            boundary_points = np.array(boundary_points)
+            # Plot boundary as scattered points
+            ax.scatter(boundary_points[:, 0], boundary_points[:, 1], 
+                      c='gray', s=1, alpha=0.3, label='Workspace Boundary')
+    
+    def analyze_workspace(self):
+        """Analyze robot workspace and report on expected positions"""
+        print("\nWorkspace Analysis:")
+        print("-" * 30)
+        
+        # Calculate actual workspace limits
+        positions = []
+        for theta1 in np.linspace(-0.5, 0.5, 50):
+            for theta2 in np.linspace(-0.5, 0.5, 50):
+                pos = self.kinematics.direct_kinematics(theta1, theta2)
+                if not np.isnan(pos[0]) and not np.isnan(pos[1]):
+                    positions.append(pos * 1000.0)
+        
+        if positions:
+            positions = np.array(positions)
+            print(f"Actual workspace:")
+            print(f"  X range: {positions[:, 0].min():.1f} to {positions[:, 0].max():.1f} mm")
+            print(f"  Y range: {positions[:, 1].min():.1f} to {positions[:, 1].max():.1f} mm")
+            print(f"  Center: ({positions[:, 0].mean():.1f}, {positions[:, 1].mean():.1f}) mm")
+        
+        # Check expected positions
+        start_reachable = self.kinematics.is_position_reachable(self.start_position[0]/1000.0, self.start_position[1]/1000.0)
+        end_reachable = self.kinematics.is_position_reachable(self.end_position[0]/1000.0, self.end_position[1]/1000.0)
+        
+        print(f"\nExpected positions:")
+        print(f"  Start position: ({self.start_position[0]:.1f}, {self.start_position[1]:.1f}) mm - {'✅ REACHABLE' if start_reachable else '❌ UNREACHABLE'}")
+        print(f"  End position: ({self.end_position[0]:.1f}, {self.end_position[1]:.1f}) mm - {'✅ REACHABLE' if end_reachable else '❌ UNREACHABLE'}")
+        
+        if not start_reachable or not end_reachable:
+            print("\n⚠️  WARNING: Some expected positions are outside the robot's workspace!")
+            print("   The experiment configuration may need to be updated with reachable positions.")
+            
+            # Suggest alternative positions
+            print("\n💡 Suggested reachable positions near the center of workspace:")
+            if positions is not None and len(positions) > 0:
+                center_x = positions[:, 0].mean()
+                center_y = positions[:, 1].mean()
+                print(f"   Center: ({center_x:.1f}, {center_y:.1f}) mm")
+                
+                # Find positions at reasonable distance from center
+                distances = np.sqrt((positions[:, 0] - center_x)**2 + (positions[:, 1] - center_y)**2)
+                target_dist = 10.0  # 10mm from center
+                close_indices = np.where(np.abs(distances - target_dist) < 2.0)[0]  # Within 2mm of target
+                
+                if len(close_indices) > 0:
+                    sample_positions = positions[close_indices][:5]  # Take first 5 samples
+                    print(f"   Positions ~{target_dist:.0f}mm from center:")
+                    for i, pos in enumerate(sample_positions):
+                        print(f"     Option {i+1}: ({pos[0]:.1f}, {pos[1]:.1f}) mm")
     
     def plot_joint_analysis(self, experiments):
         """Create comprehensive joint analysis plots."""
@@ -149,8 +245,8 @@ class JiggyJoystickAnalyzer:
         for i, (assay_name, df) in enumerate(experiments.items()):
             color = colors[i % len(colors)]
             
-            # Compute end-effector trajectory
-            trajectory = self.compute_end_effector_trajectory(df)
+            # Compute end-effector trajectory and convert to mm
+            trajectory = self.compute_end_effector_trajectory(df) * 1000.0  # Convert from meters to mm
             time_rel = (df['timestamp'] - df['timestamp'].iloc[0]).dt.total_seconds()
             
             # Plot X-Y trajectory
@@ -169,10 +265,30 @@ class JiggyJoystickAnalyzer:
             ax2.plot(time_rel, trajectory[:, 1], 
                     label=f'{assay_name} - Y', color=color, linestyle='--')
         
+        # Check if expected positions are reachable and add warnings
+        start_reachable = self.kinematics.is_position_reachable(self.start_position[0]/1000.0, self.start_position[1]/1000.0)
+        end_reachable = self.kinematics.is_position_reachable(self.end_position[0]/1000.0, self.end_position[1]/1000.0)
+        
+        # Add reference positions from experiment configuration
+        start_color = 'red' if start_reachable else 'darkred'
+        end_color = 'green' if end_reachable else 'darkgreen'
+        start_label = 'Expected Start Position' + ('' if start_reachable else ' (UNREACHABLE)')
+        end_label = 'Expected End Position' + ('' if end_reachable else ' (UNREACHABLE)')
+        
+        ax1.scatter(self.start_position[0], self.start_position[1], 
+                   color=start_color, s=200, marker='X', edgecolor='black', 
+                   zorder=15, label=start_label)
+        ax1.scatter(self.end_position[0], self.end_position[1], 
+                   color=end_color, s=200, marker='X', edgecolor='black', 
+                   zorder=15, label=end_label)
+        
+        # Add workspace boundary visualization
+        self.plot_workspace_boundary(ax1)
+        
         # Configure workspace plot
         ax1.set_title('End-Effector Trajectories in Workspace')
-        ax1.set_xlabel('X Position (m)')
-        ax1.set_ylabel('Y Position (m)')
+        ax1.set_xlabel('X Position (mm)')
+        ax1.set_ylabel('Y Position (mm)')
         ax1.grid(True, alpha=0.3)
         ax1.axis('equal')
         ax1.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
@@ -180,7 +296,7 @@ class JiggyJoystickAnalyzer:
         # Configure position vs time plot
         ax2.set_title('End-Effector Position Over Time')
         ax2.set_xlabel('Time (s)')
-        ax2.set_ylabel('Position (m)')
+        ax2.set_ylabel('Position (mm)')
         ax2.grid(True, alpha=0.3)
         ax2.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
         
@@ -242,6 +358,10 @@ class JiggyJoystickAnalyzer:
         """Run complete analysis pipeline."""
         print("JiggyJoystick Experiment Analyzer")
         print("="*50)
+        print(f"Robot Parameters: L1={self.robot_params['L1']*1000:.1f}mm, L2={self.robot_params['L2']*1000:.1f}mm, d={self.robot_params['d']*1000:.1f}mm")
+        
+        # Workspace analysis
+        self.analyze_workspace()
         
         # Load data
         experiments = self.load_experiment_data()

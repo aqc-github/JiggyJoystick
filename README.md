@@ -5,6 +5,7 @@
 JiggyJoystick is a user-friendly system for running experiments on a 2-degrees-of-freedom (2-DOF) robotic arm. It simplifies robotic arm control using Docker containers and micro-ROS for communication with microcontrollers, designed to support beginners and non-experts.
 
 ## Key Features
+
 - **Dynamic Force Fields**: Leverage isotropic, anisotropic, oriented, and time-dependent viscous force fields for comprehensive experimentation
 - **Containerization**: Easy to set up and manage experiments using Docker
 - **Automated Control and Logging**: Control the robotic arm and log data automatically
@@ -13,6 +14,7 @@ JiggyJoystick is a user-friendly system for running experiments on a 2-degrees-o
 - **CSV Data Logging**: Automatic data collection for analysis
 
 ## Lessons Learned
+
 - Extensive testing is vital for dynamic systems to prevent unexpected behavior.
 - Improvements in automated startup processes enhance reliability.
 
@@ -28,6 +30,7 @@ JiggyJoystick is a user-friendly system for running experiments on a 2-degrees-o
 ```
 
 This script will:
+
 - Automatically detect the Teensy device port
 - Start the micro-ROS agent container
 - Start the ROS2 workspace container, which automatically launches the robot orchestrator
@@ -53,13 +56,12 @@ We've made several important improvements to the JiggyJoystick system:
 - **Visibility of ROS2 Topics**: Successfully established communication between the Teensy and micro-ROS agent, allowing all expected topics to appear correctly in the ROS2 network.
 - **Plug-and-Play Experience**: With the automatic reset and improved connection logic, the system now offers a plug-and-play experience.
 
-
-
 ## Micro-ROS Integration
 
 The JiggyJoystick system integrates with micro-ROS to communicate with the Teensy 4.1 microcontroller that controls the robotic arm. This integration provides:
 
 ### Hardware Communication
+
 - **Teensy 4.1 Node**: `/micro_ros_simulator` publishes joint states and subscribes to control commands
 - **Automatic Port Detection**: The system automatically detects the Teensy USB port
 - **Robust Connection**: Enhanced firmware with retry logic ensures reliable communication
@@ -68,14 +70,14 @@ The JiggyJoystick system integrates with micro-ROS to communicate with the Teens
 
 Once the system is running, the following topics are available:
 
-| Topic | Type | Description |
-|-------|------|-------------|
-| `/joint_states` | `sensor_msgs/JointState` | Joint positions, velocities, and efforts |
-| `/microcontroller_handshake` | `std_msgs/Bool` | Handshake initiation from Teensy |
-| `/ros2_handshake` | `std_msgs/Bool` | Handshake response to Teensy |
-| `/start_trial` | `std_msgs/Bool` | Start trial command to Teensy |
-| `/abort_trial` | `std_msgs/Bool` | Abort trial command to Teensy |
-| `/trial_success` | `std_msgs/Bool` | Trial success notification to Teensy |
+| Topic                        | Type                     | Description                              |
+| ---------------------------- | ------------------------ | ---------------------------------------- |
+| `/joint_states`              | `sensor_msgs/JointState` | Joint positions, velocities, and efforts |
+| `/microcontroller_handshake` | `std_msgs/Bool`          | Handshake initiation from Teensy         |
+| `/ros2_handshake`            | `std_msgs/Bool`          | Handshake response to Teensy             |
+| `/start_trial`               | `std_msgs/Bool`          | Start trial command to Teensy            |
+| `/abort_trial`               | `std_msgs/Bool`          | Abort trial command to Teensy            |
+| `/trial_success`             | `std_msgs/Bool`          | Trial success notification to Teensy     |
 
 ### Monitoring the Connection
 
@@ -107,11 +109,10 @@ The Teensy firmware includes several robust features:
   - Time-dependent viscous damping
   - Static force fields (original behavior)
 
-
-
 ## Experiment Description
 
 The experiment involves running a series of **assays**, each consisting of multiple **trials**, on a 2-DOF robotic arm. Each trial applies specific control parameters (e.g., force fields) for a defined duration, and the system logs joint positions, velocities, torques, and other metadata. The experiment is configured via a YAML file (`assays.yaml`), which specifies:
+
 - The number of assays and trials per assay.
 - Trial durations.
 - **Dynamic force field settings** with multiple types:
@@ -122,6 +123,7 @@ The experiment involves running a series of **assays**, each consisting of multi
   - Viscous time-dependent (damping changes over time)
 
 The system is designed to:
+
 - Load experiment configurations dynamically.
 - Control the robot by applying torques based on joint states and force fields.
 - Log data for post-experiment analysis.
@@ -184,6 +186,7 @@ The system is designed to:
 ### What's Included in Docker
 
 The Docker containers provide everything needed:
+
 - **ROS 2 Jazzy Jalisco**: Complete ROS2 installation
 - **Dependencies**: All ROS 2 packages (`rclpy`, `sensor_msgs`, `std_msgs`, `ament_python`)
 - **Python Libraries**: `numpy`, `pyyaml`, and other required packages
@@ -196,16 +199,19 @@ The Docker containers provide everything needed:
 **No installation required!** Simply clone the repository and run the startup script.
 
 ### 1. Clone the Repository
+
 ```bash
 git clone https://github.com/your-username/JiggyJoystick.git
 cd JiggyJoystick
 ```
 
 ### 2. Connect Your Teensy
+
 - Connect your Teensy 4.1 to your computer via USB
 - Ensure the Teensy has the correct firmware loaded (see firmware documentation)
 
 ### 3. Start the System
+
 ```bash
 ./scripts/start_system.sh
 ```
@@ -217,25 +223,30 @@ That's it! The Docker containers will be built automatically and the system will
 Based on extensive testing, the following procedure ensures reliable system operation:
 
 ### Quick Start (Recommended)
+
 1. **Connect Teensy**: Ensure Teensy 4.1 is connected via USB
 2. **Run startup script**: `./scripts/start_system.sh`
 3. **Manual reconnection**: If prompted, physically disconnect and reconnect the Teensy USB cable
 4. **Verify connection**: Check that handshake completes successfully
 
 ### Manual Docker Control
+
 For advanced users who prefer manual control:
 
 1. **Build containers**:
+
    ```bash
    sudo docker-compose build --no-cache
    ```
 
 2. **Start services**:
+
    ```bash
    sudo docker-compose up -d
    ```
 
 3. **Reset Teensy** (if handshake fails):
+
    ```bash
    python3 -c "
    import serial
@@ -254,9 +265,11 @@ For advanced users who prefer manual control:
    ```
 
 4. **Verify handshake**:
+
    ```bash
    sudo docker-compose logs jiggy-joystick-ros2 --tail 10
    ```
+
    Look for "Handshake: ✅ Complete"
 
 5. **Run experiment**:
@@ -265,6 +278,7 @@ For advanced users who prefer manual control:
    ```
 
 ### Expected Behavior
+
 - **Initial startup**: System may show "Handshake: ❌ Waiting" for 30-60 seconds
 - **After Teensy reset**: Handshake should complete within 5-10 seconds
 - **Successful operation**: All trials should be accepted and complete successfully
@@ -273,6 +287,7 @@ For advanced users who prefer manual control:
 ### Troubleshooting Connection Issues
 
 **If handshake fails:**
+
 1. Check Teensy connection: `ls -la /dev/ttyACM*`
 2. Verify micro-ROS node: `sudo docker exec micro-ros-agent bash -c "source /opt/ros/jazzy/setup.bash && ros2 node list"`
 3. Look for `/micro_ros_simulator` in the node list
@@ -280,6 +295,7 @@ For advanced users who prefer manual control:
 5. Check container logs: `sudo docker-compose logs micro-ros-agent`
 
 **System Status Indicators:**
+
 - ✅ **Handshake Complete**: Ready for experiments
 - ✅ **Joint States Receiving**: Real-time data flowing
 - ✅ **Action Server Ready**: Can accept trial commands
@@ -294,6 +310,7 @@ To run the `robot_orchestrator` package, simply run the main startup script:
 ```
 
 This script handles the entire startup process, including:
+
 - Detecting the Teensy port.
 - Launching the `micro-ros-agent` and `jiggy-joystick-ros2` Docker containers.
 - Automatically running the `robot_orchestrator_launch.py` file within the `jiggy-joystick-ros2` container.
@@ -303,11 +320,13 @@ This script handles the entire startup process, including:
 Once the system is running, you can monitor it in several ways:
 
 - **View Container Logs**:
+
   ```bash
   sudo docker-compose logs -f
   ```
 
 - **Connect to the ROS 2 Container**:
+
   ```bash
   sudo docker exec -it jiggy-joystick-ros2 bash
   ```
@@ -319,7 +338,7 @@ Once the system is running, you can monitor it in several ways:
 
 ## Configuration
 
-The experiment is configured via `assays.yaml` in `~/ros2_ws/src/robot_orchestrator/config/`. 
+The experiment is configured via `assays.yaml` in `~/ros2_ws/src/robot_orchestrator/config/`.
 
 ### Dynamic Force Field Configuration
 
@@ -327,37 +346,37 @@ The system now supports multiple types of force fields configured using a new fo
 
 ```yaml
 assays:
-    # Baseline - No force field
-    - name: "baseline"
-      n_trials: 3
-      trial_duration: 10.0
-      force_field:
-          enabled: false
-          matrix: [0.0, 0.0, 0.0, 0.0]
-    
-    # Isotropic viscous field
-    - name: "viscous_isotropic"
-      n_trials: 3
-      trial_duration: 10.0
-      force_field:
-          enabled: true
-          matrix: [1, 10.0]  # [type_id, damping]
-    
-    # Anisotropic viscous field
-    - name: "viscous_anisotropic"
-      n_trials: 3
-      trial_duration: 10.0
-      force_field:
-          enabled: true
-          matrix: [2, 15.0, 5.0]  # [type_id, damping_x, damping_y]
-    
-    # Time-dependent viscous field
-    - name: "viscous_time_dependent"
-      n_trials: 3
-      trial_duration: 15.0
-      force_field:
-          enabled: true
-          matrix: [4, 0.0, 25.0, 10.0]  # [type_id, damping_initial, damping_final, transition_time]
+  # Baseline - No force field
+  - name: "baseline"
+    n_trials: 3
+    trial_duration: 10.0
+    force_field:
+      enabled: false
+      matrix: [0.0, 0.0, 0.0, 0.0]
+
+  # Isotropic viscous field
+  - name: "viscous_isotropic"
+    n_trials: 3
+    trial_duration: 10.0
+    force_field:
+      enabled: true
+      matrix: [1, 10.0] # [type_id, damping]
+
+  # Anisotropic viscous field
+  - name: "viscous_anisotropic"
+    n_trials: 3
+    trial_duration: 10.0
+    force_field:
+      enabled: true
+      matrix: [2, 15.0, 5.0] # [type_id, damping_x, damping_y]
+
+  # Time-dependent viscous field
+  - name: "viscous_time_dependent"
+    n_trials: 3
+    trial_duration: 15.0
+    force_field:
+      enabled: true
+      matrix: [4, 0.0, 25.0, 10.0] # [type_id, damping_initial, damping_final, transition_time]
 ```
 
 ### Force Field Types
@@ -380,6 +399,7 @@ assays:
   - `force_field.matrix`: Force field parameters `[type_id, param1, param2, ...]`.
 
 To reload a new configuration during runtime:
+
 ```bash
 ros2 service call /load_config custom_interfaces/srv/LoadConfig "{config_file_path: 'new_assays.yaml'}"
 ```
@@ -408,6 +428,7 @@ ros2 service call /load_config custom_interfaces/srv/LoadConfig "{config_file_pa
 **Problem**: Micro-ROS agent cannot establish connection with Teensy
 
 **Symptoms**:
+
 - `/micro_ros_simulator` node not visible in `ros2 node list`
 - No `/joint_states` topic data
 - Micro-ROS agent logs show "Serial port not found" or connection errors
@@ -415,6 +436,7 @@ ros2 service call /load_config custom_interfaces/srv/LoadConfig "{config_file_pa
 **Solution**: **Manual Teensy Connection Procedure**
 
 1. **Check Teensy Detection**:
+
    ```bash
    # Verify Teensy is detected by the system
    lsusb | grep -i teensy
@@ -430,10 +452,11 @@ ros2 service call /load_config custom_interfaces/srv/LoadConfig "{config_file_pa
    - **Press ENTER** in the terminal to continue
 
 3. **Verify Connection**:
+
    ```bash
    # Check if micro-ROS node is now visible
    sudo docker exec jiggy-joystick-ros2 bash -c "source /opt/ros/jazzy/setup.bash && ros2 node list"
-   
+
    # Check topics are available
    sudo docker exec jiggy-joystick-ros2 bash -c "source /opt/ros/jazzy/setup.bash && ros2 topic list"
    ```
@@ -462,6 +485,7 @@ ros2 service call /load_config custom_interfaces/srv/LoadConfig "{config_file_pa
 ## Contributing
 
 To contribute:
+
 1. Fork the repository and make your changes
 2. Update source files in `ros2_ws/src/robot_orchestrator/` or `ros2_ws/src/custom_interfaces/`
 3. Test your changes: `./scripts/start_system.sh` (Docker will automatically rebuild)
@@ -477,3 +501,4 @@ To contribute:
 ## License
 
 This package is licensed under the Apache-2.0 License.
+

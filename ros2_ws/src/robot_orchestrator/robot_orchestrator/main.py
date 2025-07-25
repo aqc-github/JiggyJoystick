@@ -161,17 +161,67 @@ class ExperimentManagerNode(Node):
             LoadConfig, 'load_config', self.load_config_callback
         )
         
+        # Publishers for position control (direct communication method)
+        self.target_position_pub = self.create_publisher(Float64MultiArray, '/target_position_command', 10)
+        self.move_command_pub = self.create_publisher(Bool, '/move_command', 10)
+        
+        # Subscriber for position control status
+        self.position_status_sub = self.create_subscription(
+            Bool, '/position_reached', self.position_status_callback, 10
+        )
+        
+        # Position control state
+        self.position_move_complete = False
+        
         self.get_logger().info('📋 Experiment Manager Node initialized')
         self.get_logger().info(f'Loaded {len(self.assays)} assays')
     
-    def move_to_position(self, target_position, duration=2.0, message='Moving'):
-        """Move robot to a specified target position smoothly"""
-        self.get_logger().info(f"{message}: moving to {target_position} over {duration:.1f}s")
-
-        # Implement smooth movement here or signal appropriate ROS2 controllers
-        time.sleep(duration)
-
-        self.get_logger().info(f"✅ {message} completed")
+    def position_status_callback(self, msg):
+        """Handle position control status updates"""
+        if msg.data:
+            self.position_move_complete = True
+    
+    def move_to_position(self, target_position, duration=5.0, message='Moving'):
+        """Move robot to a specified target position using position control.
+        
+        This function is ONLY used for:
+        - Moving to starting position before trials (reset/setup)
+        - Returning to home position after experiments
+        - Any positioning that happens OUTSIDE of actual trial execution
+        
+        During trials, the human participant controls the joystick directly!
+        """
+        self.get_logger().info(f"{message}: moving to {target_position} mm (RESET/SETUP ONLY)")
+        
+        # Reset completion flag
+        self.position_move_complete = False
+        
+        # Send target position command (convert to meters)
+        target_msg = Float64MultiArray()
+        target_msg.data = [target_position[0] / 1000.0, target_position[1] / 1000.0]
+        self.target_position_pub.publish(target_msg)
+        
+        # Send move command
+        move_msg = Bool()
+        move_msg.data = True
+        self.move_command_pub.publish(move_msg)
+        
+        # Wait for movement to complete with timeout
+        start_time = time.time()
+        timeout = duration + 2.0  # Add 2 seconds buffer to the expected duration
+        
+        while time.time() - start_time < timeout:
+            if self.position_move_complete:
+                self.get_logger().info(f"✅ {message} completed successfully")
+                return True
+            
+            # Spin to process incoming messages
+            rclpy.spin_once(self, timeout_sec=0.01)
+            time.sleep(0.01)
+        
+        # Timeout occurred
+        self.get_logger().warn(f"⚠️ {message} timed out after {timeout:.1f}s")
+        return False
     
     def load_config(self, config_file):
         """Load experiment configuration from YAML file"""
@@ -370,6 +420,11 @@ class ControlNode(Node):
         self.ff_enabled_pub = self.create_publisher(Bool, '/ff_enabled', 10)
         self.ff_value_pub = self.create_publisher(Float64MultiArray, '/ff_value', 10)
         
+        # Position control publishers
+        self.target_position_pub = self.create_publisher(Float64MultiArray, '/target_position', 10)
+        self.move_command_pub = self.create_publisher(Bool, '/move_to_position', 10)
+        self.position_reached_pub = self.create_publisher(Bool, '/position_reached', 10)
+        
         # Subscribers
         self.joint_states_sub = self.create_subscription(
             JointState, '/joint_states', self.joint_states_callback, 10
@@ -378,12 +433,26 @@ class ControlNode(Node):
             Bool, '/microcontroller_handshake', self.teensy_handshake_callback, 10
         )
         
+        # Position control command subscribers
+        self.target_position_command_sub = self.create_subscription(
+            Float64MultiArray, '/target_position_command', self.target_position_command_callback, 10
+        )
+        self.move_command_sub = self.create_subscription(
+            Bool, '/move_command', self.move_command_callback, 10
+        )
+        
         # State
         self.handshake_complete = False
         self.q = None
         self.dq = None
         self.current_goal = None
         self.trial_start_time = None
+        
+        # Position control state
+        self.position_control_active = False
+        self.target_joint_angles = None
+        self.position_tolerance = 0.01  # radians
+        self.max_position_error = 0.1   # radians
         
         # Control parameters
         self.force_field_enabled = False
@@ -554,6 +623,75 @@ class ControlNode(Node):
             self.handshake_complete = True
             self.get_logger().info('✅ Handshake complete! Communication established.')
     
+    def target_position_command_callback(self, msg):
+        """Handle target position command from ExperimentManagerNode"""
+        if len(msg.data) >= 2:
+            target_x = msg.data[0]  # in meters
+            target_y = msg.data[1]  # in meters
+            
+            self.get_logger().info(f'📍 Received target position command: ({target_x*1000:.1f}, {target_y*1000:.1f}) mm')
+            
+            # Calculate target joint angles using inverse kinematics
+            target_angles = self.inverse_kinematics(target_x, target_y)
+            
+            if np.isnan(target_angles[0]) or np.isnan(target_angles[1]):
+                self.get_logger().error(f'❌ Target position ({target_x*1000:.1f}, {target_y*1000:.1f}) mm is unreachable!')
+                # Signal that position was not reached
+                response = Bool()
+                response.data = False
+                self.position_reached_pub.publish(response)
+                return
+            
+            # Store target for position control
+            self.target_joint_angles = target_angles
+            self.get_logger().info(f'🔧 Target joint angles: θ1={target_angles[0]:.3f}, θ2={target_angles[1]:.3f} rad')
+    
+    def move_command_callback(self, msg):
+        """Handle move command from ExperimentManagerNode"""
+        if msg.data and self.target_joint_angles is not None:
+            self.get_logger().info('🚀 Starting position control movement')
+            
+            # Activate position control
+            self.position_control_active = True
+            
+            # For now, use the existing move_to_position_cartesian method internally
+            # In a real implementation, this would interface with hardware position controllers
+            success = self.execute_position_move()
+            
+            # Signal completion
+            response = Bool()
+            response.data = success
+            self.position_reached_pub.publish(response)
+    
+    def execute_position_move(self, timeout_sec=5.0):
+        """Execute the position move and return success status"""
+        if self.target_joint_angles is None:
+            return False
+        
+        # Wait for movement to complete
+        start_time = time.time()
+        while time.time() - start_time < timeout_sec:
+            if self.q is not None:
+                # Check if we've reached the target position
+                position_error = np.abs(self.q[:2] - self.target_joint_angles)
+                max_error = np.max(position_error)
+                
+                if max_error < self.position_tolerance:
+                    self.get_logger().info(f'✅ Position reached! Error: {max_error:.4f} rad')
+                    self.position_control_active = False
+                    return True
+                
+                # Check for excessive error
+                if max_error > self.max_position_error:
+                    self.get_logger().warn(f'⚠️ Large position error: {max_error:.3f} rad')
+            
+            time.sleep(0.01)  # 100 Hz check rate
+        
+        # Timeout occurred
+        self.get_logger().error(f'❌ Move timeout after {timeout_sec}s')
+        self.position_control_active = False
+        return False
+    
     def goal_callback(self, goal_request):
         """Accept or reject incoming action goals"""
         if not self.handshake_complete:
@@ -569,11 +707,17 @@ class ControlNode(Node):
         return CancelResponse.ACCEPT
     
     def execute_trial_callback(self, goal_handle):
-        """Execute a trial based on the action goal"""
+        """Execute a trial based on the action goal.
+        
+        IMPORTANT: During trial execution, the HUMAN PARTICIPANT controls the joystick!
+        The robot follows the human's movements and applies force fields as configured.
+        Position control is NOT active during trials - it's only used for reset/setup.
+        """
         goal = goal_handle.request
         result = TrialAction.Result()
         
         self.get_logger().info(f'🚀 Starting trial: Assay {goal.assay_number}, Trial {goal.trial_number}')
+        self.get_logger().info('👤 HUMAN PARTICIPANT now controls the joystick!')
         
         # Publish trial metadata
         self.assay_pub.publish(Int32(data=goal.assay_number))
@@ -678,6 +822,71 @@ class ControlNode(Node):
             status += f"  Current trial: Assay {self.current_goal.request.assay_number}, Trial {self.current_goal.request.trial_number}\n"
             
         self.get_logger().info(status)
+    
+    def move_to_position_cartesian(self, target_x_mm, target_y_mm, timeout_sec=5.0):
+        """Move robot to target Cartesian position using position control"""
+        # Convert from mm to meters
+        target_x = target_x_mm / 1000.0
+        target_y = target_y_mm / 1000.0
+        
+        self.get_logger().info(f'🎯 Moving to target position: ({target_x_mm:.1f}, {target_y_mm:.1f}) mm')
+        
+        # Calculate target joint angles using inverse kinematics
+        target_angles = self.inverse_kinematics(target_x, target_y)
+        
+        if np.isnan(target_angles[0]) or np.isnan(target_angles[1]):
+            self.get_logger().error(f'❌ Target position ({target_x_mm:.1f}, {target_y_mm:.1f}) mm is unreachable!')
+            return False
+        
+        self.get_logger().info(f'🔧 Target joint angles: θ1={target_angles[0]:.3f}, θ2={target_angles[1]:.3f} rad')
+        
+        # Publish target position for hardware/firmware
+        target_msg = Float64MultiArray()
+        target_msg.data = [target_x, target_y]  # Send in meters
+        self.target_position_pub.publish(target_msg)
+        
+        # Signal move command
+        move_msg = Bool()
+        move_msg.data = True
+        self.move_command_pub.publish(move_msg)
+        
+        # Store target for position control
+        self.target_joint_angles = target_angles
+        self.position_control_active = True
+        
+        # Wait for movement to complete
+        start_time = time.time()
+        while time.time() - start_time < timeout_sec:
+            if self.q is not None:
+                # Check if we've reached the target position
+                position_error = np.abs(self.q[:2] - target_angles)
+                max_error = np.max(position_error)
+                
+                if max_error < self.position_tolerance:
+                    self.get_logger().info(f'✅ Position reached! Error: {max_error:.4f} rad')
+                    self.position_control_active = False
+                    return True
+                
+                # Check for excessive error
+                if max_error > self.max_position_error:
+                    self.get_logger().warn(f'⚠️ Large position error: {max_error:.3f} rad')
+            
+            time.sleep(0.01)  # 100 Hz check rate
+        
+        # Timeout occurred
+        self.get_logger().error(f'❌ Move timeout after {timeout_sec}s')
+        self.position_control_active = False
+        return False
+    
+    def get_current_cartesian_position(self):
+        """Get current end-effector position in mm"""
+        if self.q is None:
+            return None
+        
+        # Calculate forward kinematics
+        pos_m = self.forward_kinematics(self.q[0], self.q[1])
+        pos_mm = pos_m * 1000.0  # Convert to mm
+        return pos_mm
     
     def parse_force_field_config(self, ff_matrix):
         """Parse force field configuration from matrix format"""
