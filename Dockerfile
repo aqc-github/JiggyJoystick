@@ -19,10 +19,15 @@ WORKDIR /ros2_ws
 # Copy the package source files
 COPY ros2_ws/src /ros2_ws/src
 
-# Install Python dependencies using apt
+# Install Python dependencies for analysis and core functionality
 RUN apt-get update && \
-    apt-get install -y python3-numpy python3-yaml && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y \
+    python3-numpy \
+    python3-yaml \
+    python3-pandas \
+    python3-matplotlib \
+    python3-scipy \
+    && rm -rf /var/lib/apt/lists/*
 
 # Initialize rosdep
 RUN rosdep init || true
@@ -36,8 +41,13 @@ RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
 RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
     colcon build --symlink-install"
 
-# Create logs directory
-RUN mkdir -p /ros2_ws/logs
+# Copy experiment analysis tools
+COPY experiment_analyzer.py /ros2_ws/experiment_analyzer.py
+COPY test_analysis_workflow.py /ros2_ws/test_analysis_workflow.py
+RUN chmod +x /ros2_ws/experiment_analyzer.py
+
+# Create logs and analysis output directories
+RUN mkdir -p /ros2_ws/logs /ros2_ws/analysis_output
 
 # Source ROS 2 setup
 RUN echo "source /opt/ros/jazzy/setup.bash" >> ~/.bashrc

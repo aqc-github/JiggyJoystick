@@ -266,6 +266,42 @@ class ExperimentManagerNode(Node):
             self.get_logger().info(f'✅ Assay {assay_idx + 1} completed')
         
         self.get_logger().info('\n🎆 Experiment completed successfully!')
+        
+        # Run post-experiment analysis
+        self.run_post_experiment_analysis()
+    
+    def run_post_experiment_analysis(self):
+        """Run post-experiment data analysis and visualization"""
+        self.get_logger().info('\n📊 Starting post-experiment analysis...')
+        
+        try:
+            import subprocess
+            import sys
+            
+            # Run the experiment analyzer script
+            result = subprocess.run([
+                sys.executable, '/ros2_ws/experiment_analyzer.py', '--no-show'
+            ], capture_output=True, text=True, timeout=60)
+            
+            if result.returncode == 0:
+                self.get_logger().info('✅ Post-experiment analysis completed successfully!')
+                self.get_logger().info('📈 Analysis plots saved to analysis_output/ directory')
+                
+                # Log some of the analysis output
+                if result.stdout:
+                    lines = result.stdout.split('\n')
+                    for line in lines[-20:]:  # Show last 20 lines
+                        if line.strip():
+                            self.get_logger().info(f'Analysis: {line}')
+            else:
+                self.get_logger().error(f'❌ Post-experiment analysis failed with code {result.returncode}')
+                if result.stderr:
+                    self.get_logger().error(f'Error: {result.stderr}')
+                    
+        except subprocess.TimeoutExpired:
+            self.get_logger().error('⏰ Post-experiment analysis timed out after 60 seconds')
+        except Exception as e:
+            self.get_logger().error(f'❌ Failed to run post-experiment analysis: {e}')
 
 
 class ControlNode(Node):
